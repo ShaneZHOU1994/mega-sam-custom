@@ -109,11 +109,11 @@ For any questions related to our paper, please send email to zl548@cornell.edu.
 ### Bibtex
 
 ```
-@inproceedings{li2024_megasam,
-  title     = {MegaSaM: Accurate, Fast and Robust Structure and Motion from Casual Dynamic Videos},
+@inproceedings{li2025megasam,
+  title     = {{MegaSaM: Accurate, Fast and Robust Structure and Motion from Casual Dynamic Videos}},
   author    = {Li, Zhengqi and Tucker, Richard and Cole, Forrester and Wang, Qianqian and Jin, Linyi and Ye, Vickie and Kanazawa, Angjoo and Holynski, Aleksander and Snavely, Noah},
-  booktitle = {arxiv},
-  year      = {2024}
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  year      = {2025}
 }
 ```
 
