@@ -16,8 +16,7 @@
 
 
 evalset=(
-  swing
-  breakdance-flare
+  upload_frames
 )
 
 DATA_DIR=DAVIS

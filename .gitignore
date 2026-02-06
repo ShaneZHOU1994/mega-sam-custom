@@ -1,0 +1,7 @@
+outputs/
+UniDepth_outputs/
+Depth-Anything_video_visualization/
+
+*.mp4
+
+*/__pycache__/

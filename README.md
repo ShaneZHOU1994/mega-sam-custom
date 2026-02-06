@@ -101,6 +101,48 @@ Anaconda.
     modify datapath in the script):
     `./cvd_opt/cvd_opt_demo.sh`
 
+### Downloading output files from a remote instance (e.g. vast.ai)
+
+After running `run_mono-depth_demo.sh` and `evaluate_demo.sh` on a remote VM, outputs live under the repo root (e.g. `/workspace/mega-sam` on vast.ai):
+
+| Source | Remote path (under repo root) |
+|--------|-------------------------------|
+| Mono-depth (Depth-Anything) | `Depth-Anything/video_visualization/<seq>/` (e.g. `swing`, `breakdance-flare`) |
+| Mono-depth (UniDepth) | `UniDepth/outputs/<seq>/` (per-frame `.npz`) |
+| Camera tracking (evaluate_demo) | `outputs/<scene>_droid.npz` (e.g. `outputs/swing_droid.npz`, `outputs/breakdance-flare_droid.npz`) |
+
+**Where to get SSH host and port (vast.ai)**  
+1. Open [vast.ai console](https://cloud.vast.ai/) → your instance.  
+2. Click the **SSH** button (or SSH icon) on the instance card.  
+3. The popup shows the exact SSH command, e.g. `ssh -p 20544 root@142.214.185.187`.  
+   - **Port** = the number after `-p` (e.g. `20544`). Use this port only — do not use a port from a browser URL (e.g. Jupyter).  
+   - **Host** = the IP or hostname after `root@` (e.g. `142.214.185.187`). Use only the host; **do not** put `https://` or `:port` or a path in the host.  
+4. For SCP, the remote path is **after** a colon: `root@HOST:/workspace/mega-sam/outputs` (no `https`, no port in the host part).
+
+If you get **"Connection closed"**: (a) Use the port from the SSH popup, not from the instance URL. (b) Add your SSH public key to the instance (instance card → add key / SSH interface). (c) Ensure your private key is the one vast.ai has the public key for (e.g. `ssh -P PORT -i C:\Users\You\.ssh\id_ed25519 root@HOST`).
+
+**Download with SCP** (run in **cmd** or PowerShell on your Windows machine; use the **host** and **port** from the vast.ai SSH popup as above):
+
+Replace `PORT` and `HOST` with the values from the SSH popup (e.g. `PORT=20544`, `HOST=142.214.185.187`). Remote repo root is `/workspace/mega-sam`:
+
+```cmd
+scp -P PORT -r root@HOST:/workspace/mega-sam/outputs .
+scp -P PORT -r root@HOST:/workspace/mega-sam/UniDepth/outputs ./UniDepth_outputs
+scp -P PORT -r root@HOST:/workspace/mega-sam/Depth-Anything/video_visualization ./Depth-Anything_video_visualization
+```
+
+If you use a specific key: `scp -P PORT -i C:\Users\YourName\.ssh\id_ed25519 -r root@HOST:/workspace/mega-sam/outputs .`
+
+**Download with rsync** (if you have rsync; same `PORT` and `HOST`):
+
+```cmd
+rsync -avz -e "ssh -p PORT" root@HOST:/workspace/mega-sam/outputs/ ./outputs/
+rsync -avz -e "ssh -p PORT" root@HOST:/workspace/mega-sam/UniDepth/outputs/ ./UniDepth_outputs/
+rsync -avz -e "ssh -p PORT" root@HOST:/workspace/mega-sam/Depth-Anything/video_visualization/ ./Depth-Anything_video_visualization/
+```
+
+Run these from the directory where you want the folders (e.g. your local `mega-sam-custom` clone). For vast.ai, use the SSH command from the instance page (host, port, and key); typically `USER` is `root` and `HOST` is something like `ssh.vast.ai` or the instance’s direct IP.
+
 ### Contact
 
 For any questions related to our paper, please send email to zl548@cornell.edu.

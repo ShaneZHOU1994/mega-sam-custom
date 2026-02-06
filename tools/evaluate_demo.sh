@@ -18,8 +18,7 @@ DATA_PATH=DAVIS
 CKPT_PATH=checkpoints/megasam_final.pth
 
 evalset=(
-   swing
-   breakdance-flare
+   upload_frames
 )
 
 
