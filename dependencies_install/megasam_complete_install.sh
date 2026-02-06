@@ -1,35 +1,30 @@
 #!/bin/bash
 ################################################################################
-# MegaSaM Dependency Installation Script (Base Environment Only)
+# MegaSaM Complete Installation Script for Vast.ai (Base Python Only)
 #
 # Project: MegaSaM - Accurate, Fast and Robust Structure and Motion from
 #          Casual Dynamic Videos
 #
-# Upstream repo: https://github.com/mega-sam/mega-sam.git
-# Docs:         https://github.com/ShaneZHOU1994/mega-sam-custom/blob/main/README.md
+# Fork repo: https://github.com/ShaneZHOU1994/mega-sam-custom.git
+# Docs:      https://github.com/ShaneZHOU1994/mega-sam-custom/blob/main/README.md
 #
-# This script is designed for Vast.ai (or similar) containers where the
-# **base image already provides**:
-#   - Python 3.10
-#   - PyTorch 2.0.1
-#   - CUDA 11.8
+# Base Image: vastai/pytorch:2.0.1-cuda-11.8.0-py310
 #
-# IMPORTANT:
-# - This script does NOT create or activate any conda/venv.
-# - All dependencies are installed directly into the **current base env**.
-# - It will verify that the base env has torch==2.0.1+cu118 and fail early
-#   if not.
+# This script uses the BASE IMAGE's existing Python/PyTorch/CUDA setup:
+#   - Python 3.10 (system Python)
+#   - PyTorch 2.0.1 + CUDA 11.8 (already installed)
+#   - Only installs xformers using conda method (per README)
+#   - Does NOT create a conda environment (avoids reinstalling everything)
 #
-# What it does:
-#   1. Clone upstream MegaSaM repo with submodules into /workspace/mega-sam
-#   2. Verify base env versions (Python, torch, CUDA) BEFORE installing deps
-#   3. Install extra Python deps via pip (no torch/cuda/python changes)
-#   4. Install torch-scatter and xformers with --no-deps to avoid touching torch
-#   5. Verify versions again AFTER installs
-#   6. Compile camera tracking extensions (base/setup.py)
-#   7. Download Depth-Anything and RAFT checkpoints
+# This script:
+#   1. Installs Miniconda (only for conda command to install xformers)
+#   2. Clones fork repo with submodules
+#   3. Installs xformers using conda method into conda base, then copies to system Python
+#   4. Installs other Python dependencies via pip into system Python
+#   5. Compiles camera tracking extensions using system Python
+#   6. Downloads required checkpoints
 #
-# Typical usage inside container:
+# Usage:
 #   cd /workspace
 #   wget <your-url>/megasam_complete_install.sh -O megasam_complete_install.sh
 #   sed -i 's/\r$//' megasam_complete_install.sh
@@ -76,20 +71,26 @@ print_info() {
 ###############################################################################
 
 INSTALL_DIR="/workspace/mega-sam"
+REPO_URL="https://github.com/ShaneZHOU1994/mega-sam-custom.git"
+CONDA_INSTALL_DIR="/root/miniconda3"
+XFORMERS_TARBALL="xformers-0.0.22.post7-py310_cu11.8.0_pyt2.0.1.tar.bz2"
+XFORMERS_URL="https://anaconda.org/xformers/xformers/0.0.22.post7/download/linux-64/${XFORMERS_TARBALL}"
 
-print_header "MegaSaM Dependency Installation (Base Env Only)"
-echo "Install dir : $INSTALL_DIR"
-echo "Python exec : $(command -v python3 || command -v python || echo 'python not found')"
+print_header "MegaSaM Installation Script (Using Base Image Python)"
+echo "Install dir      : $INSTALL_DIR"
+echo "Repository      : $REPO_URL"
+echo "Using Python     : $(command -v python3 || command -v python)"
+echo "Conda install    : $CONDA_INSTALL_DIR (for xformers only)"
 
 ###############################################################################
-# Step 1: Ensure base tools are available
+# Step 1: Install basic system tools
 ###############################################################################
 
-print_step "1/7" "Ensuring git/wget/curl/build-essential are available"
+print_step "1/7" "Installing basic system tools"
 
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq
-    apt-get install -y -qq git wget unzip curl dos2unix build-essential > /dev/null 2>&1 || true
+    apt-get install -y -qq git wget unzip curl dos2unix build-essential bzip2 > /dev/null 2>&1 || true
 else
     print_info "apt-get not available; assuming tools are already installed."
 fi
@@ -97,403 +98,26 @@ fi
 print_success "Basic tools ready"
 
 ###############################################################################
-# Step 2: Clone upstream MegaSaM repo with submodules
+# Step 2: Verify base Python/PyTorch setup
 ###############################################################################
 
-print_step "2/7" "Cloning original MegaSaM repository with submodules"
+print_step "2/7" "Verifying base Python/PyTorch setup"
 
-if [ ! -d "$INSTALL_DIR" ]; then
-    mkdir -p "$(dirname "$INSTALL_DIR")"
-    cd "$(dirname "$INSTALL_DIR")"
-    git clone --recursive https://github.com/mega-sam/mega-sam.git "$(basename "$INSTALL_DIR")"
-    print_success "Repository cloned into $INSTALL_DIR"
+# Determine Python command
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_CMD="python"
 else
-    print_info "Repository already exists at $INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    git remote -v || true
-    print_info "Updating submodules"
-    git submodule update --init --recursive
-    print_success "Submodules updated"
-fi
-
-###############################################################################
-# Helper: version check function (Python / torch / CUDA)
-###############################################################################
-
-check_versions() {
-    local phase="$1"
-    print_info "=== VERSION CHECK (${phase}) ==="
-    python3 - << 'VERCHECK'
-import sys
-print("Python:", sys.version.split()[0])
-try:
-    import torch
-except Exception as e:
-    print("PyTorch import FAILED:", e)
-    sys.exit(1)
-
-print("PyTorch:", torch.__version__)
-print("CUDA available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("CUDA version (torch):", torch.version.cuda)
-    try:
-        print("GPU:", torch.cuda.get_device_name(0))
-    except Exception:
-        pass
-
-required_torch = "2.0.1"
-required_cuda = "11.8"
-
-if not torch.__version__.startswith(required_torch):
-    print(f"ERROR: Torch version mismatch: {torch.__version__} (expected {required_torch}).")
-    sys.exit(2)
-
-if torch.version.cuda != required_cuda:
-    print(f"ERROR: CUDA version mismatch (torch.version.cuda={torch.version.cuda}, expected {required_cuda}).")
-    sys.exit(3)
-
-print("Version check OK.")
-VERCHECK
-}
-
-###############################################################################
-# Step 3: Pre‑dependency version check (base env must be correct)
-###############################################################################
-
-print_step "3/7" "Checking base environment versions BEFORE installing dependencies"
-
-if ! check_versions "BEFORE DEPS" ; then
-    print_error "Base environment does NOT match required versions (Python 3.10 + torch 2.0.1 + cu118)."
-    print_error "Please choose a Vast.ai image with these exact versions and rerun."
+    print_error "Python not found. Please ensure Python 3.10 is installed."
     exit 1
 fi
 
-###############################################################################
-# Step 4: Install extra Python dependencies into base env (no torch/cuda changes)
-###############################################################################
-
-print_step "4/7" "Installing Python dependencies in base environment (excluding torch/cuda/python)"
-
-python3 -c "import sys; print('Using Python', sys.version)" || {
-    print_error "Python is not functional in this container."
-    exit 1
-}
-
-print_info "Upgrading pip/setuptools/wheel (safe)"
-python3 -m pip install --upgrade pip setuptools wheel -q
-
-print_info "Installing core packages via pip (no torch / cuda / python)"
-python3 -m pip install -q \
-    opencv-python-headless==4.9.0.80 \
-    tqdm==4.67.1 \
-    imageio==2.36.0 \
-    einops==0.8.0 \
-    scipy==1.14.1 \
-    matplotlib==3.9.2 \
-    wandb==0.18.7 \
-    timm==1.0.7 \
-    ninja==1.11.1 \
-    numpy==1.26.3 \
-    huggingface-hub==0.23.4 \
-    kornia==0.7.4 \
-    gdown
-
-print_success "Core Python packages installed"
-
-print_info "Installing torch-scatter for PyTorch 2.0.1 + CUDA 11.8 (no torch changes)"
-python3 -m pip install -q torch-scatter -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
-print_success "torch-scatter installed"
-
-print_info "Installing xformers 0.0.22.post7 for cu118 with --no-deps (so torch is untouched)"
-python3 -m pip install -q xformers==0.0.22.post7 --no-deps --index-url https://download.pytorch.org/whl/cu118
-print_success "xformers installed"
-
-###############################################################################
-# Step 5: Post‑dependency version check (ensure torch/cu still correct)
-###############################################################################
-
-print_step "5/7" "Re-checking base environment versions AFTER dependency installation"
-
-if ! check_versions "AFTER DEPS" ; then
-    print_error "Environment versions changed unexpectedly after dependency installation."
-    exit 1
-fi
-
-###############################################################################
-# Step 6: Compile camera tracking extensions (base/setup.py)
-###############################################################################
-
-print_step "6/7" "Compiling camera tracking extensions (base/setup.py)"
-
-cd "$INSTALL_DIR/base"
-python3 setup.py install
-
-print_success "Camera tracking extensions compiled and installed"
-
-###############################################################################
-# Step 7: Download Depth-Anything and RAFT checkpoints
-###############################################################################
-
-print_step "7/7" "Downloading required checkpoints"
-
-cd "$INSTALL_DIR"
-
-print_info "Preparing Depth-Anything checkpoint directory"
-mkdir -p "$INSTALL_DIR/Depth-Anything/checkpoints"
-cd "$INSTALL_DIR/Depth-Anything/checkpoints"
-
-if [ ! -f "depth_anything_vitl14.pth" ]; then
-    print_info "Downloading Depth-Anything checkpoint (~1.5 GB)..."
-    if wget -q --show-progress \
-        https://huggingface.co/spaces/LiheYoung/Depth-Anything/resolve/main/checkpoints/depth_anything_vitl14.pth; then
-        print_success "Depth-Anything checkpoint downloaded"
-    else
-        print_error "Failed to download Depth-Anything checkpoint automatically."
-        print_info "Please download manually from:"
-        print_info "  https://huggingface.co/spaces/LiheYoung/Depth-Anything/blob/main/checkpoints/depth_anything_vitl14.pth"
-        print_info "and place it at:"
-        print_info "  $INSTALL_DIR/Depth-Anything/checkpoints/depth_anything_vitl14.pth"
-    fi
-else
-    print_info "Depth-Anything checkpoint already present"
-fi
-
-print_info "Preparing RAFT checkpoint directory"
-mkdir -p "$INSTALL_DIR/cvd_opt"
-cd "$INSTALL_DIR/cvd_opt"
-
-if [ ! -f "raft-things.pth" ]; then
-    print_info "Downloading RAFT checkpoint (~250 MB) via gdown..."
-    # RAFT checkpoint folder is documented in the official README
-    if gdown "1JLdBfNpOYGpwI5YvFePLz5hWXqZXpxMR" -O raft-things.pth --quiet; then
-        print_success "RAFT checkpoint downloaded"
-    else
-        print_error "Failed to download RAFT checkpoint automatically."
-        print_info "Please download manually from the RAFT Google Drive folder and place it at:"
-        print_info "  $INSTALL_DIR/cvd_opt/raft-things.pth"
-    fi
-else
-    print_info "RAFT checkpoint already present"
-fi
-
-###############################################################################
-# Final summary
-###############################################################################
-
-print_header "MegaSaM setup complete (Base Env Only)"
-
-echo "Repository path : $INSTALL_DIR"
-echo ""
-echo "Checkpoints:"
-if [ -f "$INSTALL_DIR/Depth-Anything/checkpoints/depth_anything_vitl14.pth" ]; then
-    print_success "Depth-Anything checkpoint is present"
-else
-    print_error "Depth-Anything checkpoint is MISSING"
-fi
-
-if [ -f "$INSTALL_DIR/cvd_opt/raft-things.pth" ]; then
-    print_success "RAFT checkpoint is present"
-else
-    print_error "RAFT checkpoint is MISSING"
-fi
-
-echo ""
-print_info "To run MegaSaM, in this same base environment:"
-echo "  cd \"$INSTALL_DIR\""
-echo "  # Edit paths in mono_depth_scripts/, tools/, cvd_opt/ as needed"
-echo "  ./mono_depth_scripts/run_mono-depth_demo.sh"
-echo "  ./tools/evaluate_demo.sh"
-echo "  ./cvd_opt/cvd_opt_demo.sh"
-echo ""
-
-#!/bin/bash
-################################################################################
-# MegaSaM Dependency-Only Installation Script for Vast.ai GPU Instances
-#
-# Project: MegaSaM - Structure and Motion from Casual Dynamic Videos
-# Original Repo: https://github.com/mega-sam/mega-sam.git
-# Fork Docs: https://github.com/ShaneZHOU1994/mega-sam-custom/blob/main/README.md
-#
-# This script assumes:
-#   - You are running inside a container that ALREADY has:
-#       * Python 3.10
-#       * PyTorch 2.0.1
-#       * CUDA 11.8
-#   - You do NOT want this script to install or change Python / PyTorch / CUDA.
-#
-# It will:
-#   1. Clone the original MegaSaM repo with submodules
-#   2. Create an environment named "megasam"
-#        - Prefer Conda (clone from base so versions stay identical)
-#        - Fallback to Python venv with --system-site-packages
-#   3. Install only the extra Python dependencies from README/environment.yml
-#   4. Compile the camera tracking extensions
-#   5. Download required checkpoints into the correct locations
-#
-# USAGE (inside your Vast.ai container, from /workspace or any writable dir):
-#   wget <your-url>/megasam_complete_install.sh -O megasam_complete_install.sh
-#   sed -i 's/\r$//' megasam_complete_install.sh
-#   chmod +x megasam_complete_install.sh
-#   ./megasam_complete_install.sh
-################################################################################
-
-set -e  # Exit immediately on error
-
-###############################################################################
-# Color helpers
-###############################################################################
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-print_header() {
-    echo -e "\n${BLUE}============================================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}============================================================${NC}\n"
-}
-
-print_step() {
-    echo -e "\n${YELLOW}[$1] $2${NC}\n"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
-
-print_info() {
-    echo -e "${BLUE}ℹ $1${NC}"
-}
-
-###############################################################################
-# Configuration
-###############################################################################
-
-# Where to clone the original upstream repo
-INSTALL_DIR="/workspace/mega-sam"
-
-# Environment name requested
-ENV_NAME="megasam"
-
-# If using venv, this is the directory path
-VENV_DIR="/workspace/${ENV_NAME}"
-
-print_header "MegaSaM Dependency Installation (no PyTorch/CUDA/Python changes)"
-echo "Install dir : $INSTALL_DIR"
-echo "Env name    : $ENV_NAME"
-echo "Venv dir    : $VENV_DIR"
-
-###############################################################################
-# Step 1: Basic tools (no Python / CUDA changes)
-###############################################################################
-
-print_step "1/7" "Ensuring basic system tools are available (git, wget, unzip, curl)"
-
-if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq
-    apt-get install -y -qq git wget unzip curl dos2unix build-essential > /dev/null 2>&1 || true
-else
-    print_info "apt-get not available; assuming git/wget/curl are already installed."
-fi
-
-print_success "Basic tools checked"
-
-###############################################################################
-# Step 2: Clone original MegaSaM repository
-###############################################################################
-
-print_step "2/7" "Cloning original MegaSaM repository with submodules"
-
-if [ ! -d "$INSTALL_DIR" ]; then
-    mkdir -p "$(dirname "$INSTALL_DIR")"
-    cd "$(dirname "$INSTALL_DIR")"
-    git clone --recursive https://github.com/mega-sam/mega-sam.git "$(basename "$INSTALL_DIR")"
-    print_success "Repository cloned into $INSTALL_DIR"
-else
-    print_info "Repository already exists at $INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    git remote -v || true
-    print_info "Updating submodules"
-    git submodule update --init --recursive
-    print_success "Submodules updated"
-fi
-
-###############################################################################
-# Step 3: Create 'megasam' environment (conda preferred, venv fallback)
-###############################################################################
-
-print_step "3/7" "Creating 'megasam' environment without touching PyTorch/CUDA/Python versions"
-
-ENV_TYPE=""
-ENV_ACTIVATE_CMD=""
-
-if command -v conda >/dev/null 2>&1; then
-    print_info "Conda detected. Creating conda env '$ENV_NAME' by cloning 'base' to preserve versions."
-
-    # Remove old env if it exists
-    conda env remove -n "$ENV_NAME" -y >/dev/null 2>&1 || true
-
-    # Clone base environment (this reuses existing Python / PyTorch / CUDA versions)
-    conda create -n "$ENV_NAME" --clone base -y
-
-    ENV_TYPE="conda"
-    ENV_ACTIVATE_CMD="conda activate $ENV_NAME"
-    print_success "Conda env '$ENV_NAME' created by cloning 'base'"
-else
-    print_info "Conda NOT detected. Falling back to Python venv with system site-packages."
-
-    # Use the existing Python 3.10 in the container
-    if ! command -v python3 >/dev/null 2>&1; then
-        print_error "python3 not found. Please ensure Python 3.10 is installed in the container."
-        exit 1
-    fi
-
-    # Remove existing venv if present
-    if [ -d "$VENV_DIR" ]; then
-        print_info "Removing existing venv at $VENV_DIR"
-        rm -rf "$VENV_DIR"
-    fi
-
-    python3 -m venv --system-site-packages "$VENV_DIR"
-
-    ENV_TYPE="venv"
-    ENV_ACTIVATE_CMD="source \"$VENV_DIR/bin/activate\""
-    print_success "Python venv created at $VENV_DIR (inherits system site-packages)"
-fi
-
-echo ""
-print_info "To activate later, run:"
-echo "  $ENV_ACTIVATE_CMD"
-
-###############################################################################
-# Step 4: Activate env and install Python dependencies (except PyTorch/CUDA/Python)
-###############################################################################
-
-print_step "4/7" "Activating environment and installing extra Python dependencies"
-
-if [ "$ENV_TYPE" = "conda" ]; then
-    # shellcheck disable=SC1091
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    eval "$ENV_ACTIVATE_CMD"
-else
-    # venv
-    # shellcheck disable=SC1090
-    eval "$ENV_ACTIVATE_CMD"
-fi
-
-python -c "import sys; print('Using Python', sys.version)" || {
-    print_error "Python not working inside the environment."
-    exit 1
-}
-
-print_info "=== VERSION CHECK BEFORE DEP INSTALLS ==="
-python - << 'PRECHECK'
+print_info "Using Python: $PYTHON_CMD ($($PYTHON_CMD --version))"
+
+# Verify PyTorch is installed
+print_info "Checking PyTorch installation..."
+$PYTHON_CMD - << 'PYCHECK'
 import sys
 print("Python:", sys.version.split()[0])
 try:
@@ -506,118 +130,434 @@ try:
             print("GPU:", torch.cuda.get_device_name(0))
         except Exception:
             pass
-except Exception as e:
-    print("PyTorch not importable yet:", e)
-PRECHECK
-
-print_info "Installing core packages via pip (no torch / cuda / python)"
-
-pip install --upgrade pip setuptools wheel -q
-
-pip install -q \
-    opencv-python-headless==4.9.0.80 \
-    tqdm==4.67.1 \
-    imageio==2.36.0 \
-    einops==0.8.0 \
-    scipy==1.14.1 \
-    matplotlib==3.9.2 \
-    wandb==0.18.7 \
-    timm==1.0.7 \
-    ninja==1.11.1 \
-    numpy==1.26.3 \
-    huggingface-hub==0.23.4 \
-    kornia==0.7.4 \
-    gdown
-
-print_success "Core Python packages installed"
-
-print_info "Installing torch-scatter for PyTorch 2.0.1 + CUDA 11.8"
-pip install -q torch-scatter -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
-print_success "torch-scatter installed"
-
-print_info "Installing xformers 0.0.22.post7 for cu118 (NO torch reinstall, using --no-deps)"
-pip install -q xformers==0.0.22.post7 --no-deps --index-url https://download.pytorch.org/whl/cu118
-print_success "xformers installed"
-
-print_info "=== VERSION CHECK AFTER xformers INSTALL ==="
-python - << 'POSTCHECK'
-import sys
-print("Python:", sys.version.split()[0])
-try:
-    import torch
-    print("PyTorch:", torch.__version__)
-    print("CUDA available:", torch.cuda.is_available())
-    if torch.cuda.is_available():
-        print("CUDA version (torch):", torch.version.cuda)
-        try:
-            print("GPU:", torch.cuda.get_device_name(0))
-        except Exception:
-            pass
-except Exception as e:
-    print("PyTorch not importable:", e)
-POSTCHECK
-
-###############################################################################
-# Step 5: Quick verification of PyTorch / CUDA / key deps
-###############################################################################
-
-print_step "5/7" "Verifying that PyTorch 2.0.1 + CUDA 11.8 are available in this env"
-
-python - << 'PYCHECK'
-import sys
-
-def fail(msg: str) -> None:
-    print(msg)
+    
+    # Verify versions match requirements
+    if not torch.__version__.startswith("2.0.1"):
+        print(f"WARNING: PyTorch version {torch.__version__} may not match required 2.0.1")
+    if torch.version.cuda != "11.8":
+        print(f"WARNING: CUDA version {torch.version.cuda} may not match required 11.8")
+except ImportError as e:
+    print(f"ERROR: PyTorch not found: {e}")
     sys.exit(1)
-
-try:
-    import torch
-except Exception as e:
-    fail(f"ERROR: Could not import torch inside env: {e}")
-
-print("Python:", sys.version.split()[0])
-print("PyTorch:", torch.__version__)
-
-if not torch.__version__.startswith("2.0.1"):
-    fail(f"ERROR: Torch version mismatch: {torch.__version__} (expected 2.0.1). "
-         "Ensure your base container matches MegaSaM requirements.")
-
-print("CUDA available:", torch.cuda.is_available())
-if torch.cuda.is_available():
-    print("CUDA version (torch):", torch.version.cuda)
-    print("GPU:", torch.cuda.get_device_name(0))
-
-for name in ["torch_scatter", "xformers"]:
-    try:
-        __import__(name)
-        print(f"{name}: OK")
-    except Exception as e:
-        fail(f"ERROR: {name} import failed: {e}")
-
-print("Environment verification passed.")
 PYCHECK
 
-print_success "Environment verification succeeded"
+if [ $? -ne 0 ]; then
+    print_error "PyTorch verification failed. Base image should have PyTorch 2.0.1 + CUDA 11.8."
+    exit 1
+fi
+
+print_success "Base Python/PyTorch setup verified"
 
 ###############################################################################
-# Step 6: Compile camera tracking extensions
+# Step 3: Clone fork repository with submodules
 ###############################################################################
 
-print_step "6/7" "Compiling camera tracking extensions (base/setup.py)"
+print_step "3/7" "Cloning fork repository with submodules"
 
-cd "$INSTALL_DIR/base"
-python setup.py install
-
-print_success "Camera tracking extensions compiled and installed"
-
-###############################################################################
-# Step 7: Download checkpoints (Depth-Anything + RAFT)
-###############################################################################
-
-print_step "7/7" "Downloading required checkpoints"
+if [ ! -d "$INSTALL_DIR" ]; then
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    cd "$(dirname "$INSTALL_DIR")"
+    print_info "Cloning $REPO_URL..."
+    git clone --recursive "$REPO_URL" "$(basename "$INSTALL_DIR")"
+    print_success "Repository cloned into $INSTALL_DIR"
+else
+    print_info "Repository already exists at $INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    git remote -v || true
+    print_info "Updating submodules..."
+    git submodule update --init --recursive
+    print_success "Submodules updated"
+fi
 
 cd "$INSTALL_DIR"
 
+###############################################################################
+# Step 4: Install Miniconda (only for xformers installation)
+###############################################################################
+
+print_step "4/7" "Installing Miniconda (for xformers conda install only)"
+
+if command -v conda >/dev/null 2>&1; then
+    print_info "Conda already installed at: $(command -v conda)"
+    CONDA_BASE=$(conda info --base 2>/dev/null || echo "$CONDA_INSTALL_DIR")
+    print_success "Using existing conda at: $CONDA_BASE"
+else
+    print_info "Downloading Miniconda installer..."
+    MINICONDA_INSTALLER="/tmp/miniconda.sh"
+    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O "$MINICONDA_INSTALLER"
+    
+    print_info "Installing Miniconda to $CONDA_INSTALL_DIR..."
+    bash "$MINICONDA_INSTALLER" -b -p "$CONDA_INSTALL_DIR" -u
+    
+    # Initialize conda
+    "$CONDA_INSTALL_DIR/bin/conda" init bash >/dev/null 2>&1 || true
+    
+    print_success "Miniconda installed successfully"
+    rm -f "$MINICONDA_INSTALLER"
+fi
+
+# Ensure conda is in PATH
+if ! command -v conda >/dev/null 2>&1; then
+    export PATH="$CONDA_INSTALL_DIR/bin:$PATH"
+fi
+
+# Initialize conda for this session
+if [ -f "$CONDA_INSTALL_DIR/etc/profile.d/conda.sh" ]; then
+    source "$CONDA_INSTALL_DIR/etc/profile.d/conda.sh"
+fi
+
+# Accept Anaconda Terms of Service
+print_info "Accepting Anaconda Terms of Service for default channels..."
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+
+conda --version
+print_success "Conda is ready (for xformers installation only)"
+
+###############################################################################
+# Step 5: Install xformers using conda method (per README)
+###############################################################################
+
+print_step "5/7" "Installing xformers using conda method (per README)"
+
+# Check if xformers is already installed in system Python
+if $PYTHON_CMD -c "import xformers" 2>/dev/null; then
+    XFORMERS_VERSION=$($PYTHON_CMD -c "import xformers; print(xformers.__version__)" 2>/dev/null)
+    print_info "xformers already installed in system Python: $XFORMERS_VERSION"
+    print_success "xformers is ready"
+else
+    # Download xformers tarball
+    XFORMERS_DOWNLOAD_PATH="/tmp/${XFORMERS_TARBALL}"
+    if [ ! -f "$XFORMERS_DOWNLOAD_PATH" ]; then
+        print_info "Downloading xformers prebuilt package..."
+        wget -q --show-progress "$XFORMERS_URL" -O "$XFORMERS_DOWNLOAD_PATH"
+        print_success "xformers tarball downloaded"
+    else
+        print_info "xformers tarball already exists, reusing..."
+    fi
+    
+    # Install xformers into conda base environment first (per README)
+    print_info "Installing xformers into conda base environment (per README)..."
+    conda install "$XFORMERS_DOWNLOAD_PATH" -y --prefix "$CONDA_INSTALL_DIR"
+    
+    # Get system Python site-packages directory (ensure we use the actual system Python, not conda's)
+    # Temporarily remove conda from PATH to ensure we get the right site-packages
+    OLD_PATH="$PATH"
+    export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$CONDA_INSTALL_DIR" | tr '\n' ':' | sed 's/:$//')
+    
+    SYSTEM_SITE_PACKAGES=$($PYTHON_CMD -c "import sys; import site; print([p for p in site.getsitepackages() if 'conda' not in p.lower()][0] if any('conda' not in p.lower() for p in site.getsitepackages()) else site.getsitepackages()[0])" 2>/dev/null || \
+                          $PYTHON_CMD -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null || \
+                          $PYTHON_CMD -c "import sys; print(sys.path[-1])" 2>/dev/null)
+    
+    export PATH="$OLD_PATH"
+    
+    # Fallback: try to infer from Python executable path
+    if [ -z "$SYSTEM_SITE_PACKAGES" ] || [[ "$SYSTEM_SITE_PACKAGES" == *"conda"* ]]; then
+        PYTHON_BIN_DIR=$(dirname "$($PYTHON_CMD -c 'import sys; print(sys.executable)')")
+        if [[ "$PYTHON_BIN_DIR" == *"/venv/"* ]]; then
+            # It's a venv, site-packages is typically ../lib/pythonX.X/site-packages
+            SYSTEM_SITE_PACKAGES=$(dirname "$PYTHON_BIN_DIR")/lib/python$($PYTHON_CMD -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages
+        elif [[ "$PYTHON_BIN_DIR" == *"/usr/"* ]]; then
+            SYSTEM_SITE_PACKAGES="/usr/local/lib/python$($PYTHON_CMD -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
+        else
+            SYSTEM_SITE_PACKAGES="$PYTHON_BIN_DIR/../lib/python$($PYTHON_CMD -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
+        fi
+        SYSTEM_SITE_PACKAGES=$(readlink -f "$SYSTEM_SITE_PACKAGES" 2>/dev/null || echo "$SYSTEM_SITE_PACKAGES")
+    fi
+    
+    print_info "System Python site-packages: $SYSTEM_SITE_PACKAGES"
+    
+    # Ensure directory exists
+    mkdir -p "$SYSTEM_SITE_PACKAGES" || {
+        print_error "Cannot create or access system Python site-packages directory"
+        exit 1
+    }
+    
+    # Install xformers into conda base environment first (per README)
+    print_info "Installing xformers into conda base environment (per README)..."
+    conda install "$XFORMERS_DOWNLOAD_PATH" -y --prefix "$CONDA_INSTALL_DIR"
+    
+    # Find xformers installation in conda
+    # Conda installs packages to: $CONDA_INSTALL_DIR/lib/python3.X/site-packages/ or $CONDA_INSTALL_DIR/pkgs/package-name/lib/python3.X/site-packages/
+    CONDA_XFORMERS_PATH=$(find "$CONDA_INSTALL_DIR" -name "xformers" -type d -path "*/site-packages/xformers" 2>/dev/null | grep -v "__pycache__" | grep -v ".pyc" | head -1)
+    
+    # If not found, check pkgs directory (conda package cache) - this is where conda extracts packages
+    if [ -z "$CONDA_XFORMERS_PATH" ]; then
+        print_info "Checking conda package cache..."
+        CONDA_XFORMERS_PATH=$(find "$CONDA_INSTALL_DIR/pkgs" -name "xformers" -type d -path "*/site-packages/xformers" 2>/dev/null | head -1)
+    fi
+    
+    # Also check if it was installed to conda's base lib
+    if [ -z "$CONDA_XFORMERS_PATH" ]; then
+        for pyver in python3.10 python3.11 python3.12 python3.13; do
+            if [ -d "$CONDA_INSTALL_DIR/lib/$pyver/site-packages/xformers" ]; then
+                CONDA_XFORMERS_PATH="$CONDA_INSTALL_DIR/lib/$pyver/site-packages/xformers"
+                break
+            fi
+        done
+    fi
+    
+    if [ -n "$CONDA_XFORMERS_PATH" ]; then
+        print_info "Found xformers in conda at: $CONDA_XFORMERS_PATH"
+        
+        # Copy xformers to system Python site-packages
+        print_info "Copying xformers to system Python site-packages..."
+        if cp -r "$CONDA_XFORMERS_PATH" "$SYSTEM_SITE_PACKAGES/"; then
+            print_success "xformers copied successfully"
+            
+            # Verify copy succeeded
+            if [ ! -d "$SYSTEM_SITE_PACKAGES/xformers" ]; then
+                print_error "Copy verification failed - xformers directory not found"
+                CONDA_XFORMERS_PATH=""
+            else
+                # Also copy any xformers-related .so files from conda lib
+                CONDA_LIB_DIR=$(dirname "$CONDA_XFORMERS_PATH" | xargs dirname)
+                if [ -d "$CONDA_LIB_DIR" ]; then
+                    print_info "Copying xformers shared libraries..."
+                    find "$CONDA_LIB_DIR" -name "*xformers*.so*" -type f 2>/dev/null | while read -r lib_file; do
+                        cp "$lib_file" "$SYSTEM_SITE_PACKAGES/" 2>/dev/null || true
+                    done
+                fi
+            fi
+        else
+            print_error "Failed to copy xformers to system Python"
+            print_info "Trying alternative: extracting from tarball..."
+            CONDA_XFORMERS_PATH=""
+        fi
+    fi
+    
+    # If copying failed or xformers not found, extract from tarball
+    if [ -z "$CONDA_XFORMERS_PATH" ] || ! $PYTHON_CMD -c "import xformers" 2>/dev/null; then
+        print_info "Extracting xformers from conda tarball..."
+        EXTRACT_DIR="/tmp/xformers_extract"
+        mkdir -p "$EXTRACT_DIR"
+        cd "$EXTRACT_DIR"
+        tar -xjf "$XFORMERS_DOWNLOAD_PATH"
+        
+        # Conda package structure: info/, lib/python3.10/site-packages/xformers/
+        PKG_DIR=$(find . -type d -path "*/lib/python*/site-packages" | head -1)
+        if [ -n "$PKG_DIR" ] && [ -d "$PKG_DIR/xformers" ]; then
+            print_info "Found xformers package in extracted tarball at: $PKG_DIR/xformers"
+            # Manual copy is more reliable than pip install for conda packages
+            print_info "Copying xformers from extracted package..."
+            cp -r "$PKG_DIR/xformers" "$SYSTEM_SITE_PACKAGES/" || {
+                print_error "Failed to copy xformers from extracted package"
+                exit 1
+            }
+        else
+            print_error "Could not find xformers package in extracted tarball"
+            print_info "Tarball contents:"
+            ls -la "$EXTRACT_DIR" || true
+            exit 1
+        fi
+        
+        cd - >/dev/null
+        rm -rf "$EXTRACT_DIR"
+    fi
+    
+    # Verify xformers installation in system Python
+    # IMPORTANT: Remove conda from PATH to ensure we use system Python
+    print_info "Verifying xformers installation in system Python..."
+    
+    # Save current directory
+    ORIG_DIR=$(pwd)
+    
+    # Temporarily remove conda from PATH to get correct Python
+    OLD_PATH="$PATH"
+    export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$CONDA_INSTALL_DIR" | tr '\n' ':' | sed 's/:$//')
+    
+    # Get absolute path to system Python (avoid conda's Python)
+    # Use command -v with clean PATH to find the right Python
+    ABS_PYTHON_CMD=$(command -v "$PYTHON_CMD" 2>/dev/null || echo "$PYTHON_CMD")
+    
+    # If it's still relative or contains conda, try to resolve it
+    if [[ "$ABS_PYTHON_CMD" != /* ]] || [[ "$ABS_PYTHON_CMD" == *"conda"* ]]; then
+        # Try to get it from Python itself (but with clean PATH)
+        ABS_PYTHON_CMD=$($PYTHON_CMD -c "import sys; print(sys.executable)" 2>/dev/null || echo "$PYTHON_CMD")
+    fi
+    
+    # Final fallback: resolve relative path
+    if [[ "$ABS_PYTHON_CMD" != /* ]]; then
+        ABS_PYTHON_CMD=$(cd "$ORIG_DIR" && command -v "$PYTHON_CMD" 2>/dev/null || echo "$PYTHON_CMD")
+    fi
+    
+    # Ensure it's an absolute path
+    if [[ "$ABS_PYTHON_CMD" != /* ]]; then
+        # Last resort: construct from known locations
+        if [ -f "/venv/main/bin/python3" ]; then
+            ABS_PYTHON_CMD="/venv/main/bin/python3"
+        elif [ -f "/usr/bin/python3" ]; then
+            ABS_PYTHON_CMD="/usr/bin/python3"
+        else
+            ABS_PYTHON_CMD="$PYTHON_CMD"
+        fi
+    fi
+    
+    # Verify the Python executable exists
+    if [ ! -f "$ABS_PYTHON_CMD" ]; then
+        print_error "Cannot find Python executable: $ABS_PYTHON_CMD"
+        print_info "Trying to locate Python..."
+        which python3 || which python || print_error "Python not found in PATH"
+        export PATH="$OLD_PATH"
+        exit 1
+    fi
+    
+    print_info "Using Python: $ABS_PYTHON_CMD"
+    
+    # Verify xformers is in the correct location
+    if [ ! -d "$SYSTEM_SITE_PACKAGES/xformers" ]; then
+        print_error "xformers directory not found at $SYSTEM_SITE_PACKAGES/xformers"
+        cd "$ORIG_DIR"
+        export PATH="$OLD_PATH"
+        exit 1
+    fi
+    
+    # Test import with explicit path priority
+    cd "$ORIG_DIR"
+    $ABS_PYTHON_CMD - << PYVERIFY
+import sys
+import os
+
+# Ensure our site-packages is first in path
+target_path = '$SYSTEM_SITE_PACKAGES'
+if target_path not in sys.path:
+    sys.path.insert(0, target_path)
+
+# Remove any conda paths that might interfere
+sys.path = [p for p in sys.path if 'conda' not in p.lower() or p == target_path]
+
+# Verify we can import xformers
+try:
+    import xformers
+    xformers_path = os.path.dirname(xformers.__file__)
+    print(f'✓ xformers {xformers.__version__} verified')
+    print(f'  Location: {xformers_path}')
+    
+    # Verify it's from our target location
+    if target_path in xformers_path:
+        print(f'✓ xformers is correctly installed in system Python')
+    else:
+        print(f'⚠ Warning: xformers imported from {xformers_path}, not {target_path}')
+except Exception as e:
+    print(f'✗ xformers import failed: {e}')
+    print(f'  Python executable: {sys.executable}')
+    print(f'  Python path (first 3): {":".join(sys.path[:3])}')
+    print(f'  Target path exists: {os.path.exists(target_path + "/xformers/__init__.py")}')
+    sys.exit(1)
+PYVERIFY
+    
+    VERIFY_EXIT_CODE=$?
+    cd "$ORIG_DIR"
+    export PATH="$OLD_PATH"
+    
+    if [ $VERIFY_EXIT_CODE -ne 0 ]; then
+        print_error "xformers verification failed"
+        exit 1
+    fi
+    
+    print_success "xformers installed successfully in system Python"
+    
+    # Clean up tarball
+    rm -f "$XFORMERS_DOWNLOAD_PATH"
+fi
+
+# xformers verification already completed above - no need for duplicate check
+
+###############################################################################
+# Step 6: Install additional Python dependencies (into system Python)
+###############################################################################
+
+print_step "6/7" "Installing additional Python dependencies (system Python)"
+
+# Remove conda from PATH to ensure we use system Python's pip
+OLD_PATH_PIP="$PATH"
+export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$CONDA_INSTALL_DIR" | tr '\n' ':' | sed 's/:$//')
+
+# Get absolute path to system Python
+SYSTEM_PYTHON_ABS=$($PYTHON_CMD -c "import sys; print(sys.executable)" 2>/dev/null)
+if [[ "$SYSTEM_PYTHON_ABS" == *"conda"* ]] || [ -z "$SYSTEM_PYTHON_ABS" ]; then
+    SYSTEM_PYTHON_ABS=$(command -v "$PYTHON_CMD" 2>/dev/null || echo "$PYTHON_CMD")
+fi
+
+# Fallback to known locations
+if [[ "$SYSTEM_PYTHON_ABS" != /* ]] || [[ "$SYSTEM_PYTHON_ABS" == *"conda"* ]]; then
+    if [ -f "/venv/main/bin/python3" ]; then
+        SYSTEM_PYTHON_ABS="/venv/main/bin/python3"
+    elif [ -f "/usr/bin/python3" ]; then
+        SYSTEM_PYTHON_ABS="/usr/bin/python3"
+    else
+        SYSTEM_PYTHON_ABS="$PYTHON_CMD"
+    fi
+fi
+
+print_info "Using system Python: $SYSTEM_PYTHON_ABS"
+print_info "Python version: $($SYSTEM_PYTHON_ABS --version)"
+
+print_info "Upgrading pip, setuptools, wheel..."
+$SYSTEM_PYTHON_ABS -m pip install --upgrade pip setuptools wheel -q 2>&1 | grep -v "WARNING: Running pip as the 'root' user" || true
+
+print_info "Installing additional packages into system Python..."
+$SYSTEM_PYTHON_ABS -m pip install -q \
+    opencv-python-headless==4.9.0.80 \
+    tqdm==4.67.1 \
+    imageio==2.36.0 \
+    einops==0.8.0 \
+    scipy==1.14.1 \
+    matplotlib==3.9.2 \
+    wandb==0.18.7 \
+    timm==1.0.7 \
+    ninja==1.11.1 \
+    numpy==1.26.3 \
+    huggingface-hub==0.23.4 \
+    kornia==0.7.4 \
+    gdown \
+    torch-scatter -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
+
+print_success "Additional Python packages installed"
+
+# Restore PATH
+export PATH="$OLD_PATH_PIP"
+
+###############################################################################
+# Step 7: Compile camera tracking extensions (using system Python)
+###############################################################################
+
+print_step "7/7" "Compiling camera tracking extensions (system Python)"
+
+# Remove conda from PATH to ensure we use system Python
+OLD_PATH_COMPILE="$PATH"
+export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "$CONDA_INSTALL_DIR" | tr '\n' ':' | sed 's/:$//')
+
+# Ensure SYSTEM_PYTHON_ABS is set (should be from previous step, but add fallback)
+if [ -z "$SYSTEM_PYTHON_ABS" ] || [[ "$SYSTEM_PYTHON_ABS" == *"conda"* ]]; then
+    SYSTEM_PYTHON_ABS=$(command -v "$PYTHON_CMD" 2>/dev/null || echo "$PYTHON_CMD")
+    if [[ "$SYSTEM_PYTHON_ABS" != /* ]]; then
+        if [ -f "/venv/main/bin/python3" ]; then
+            SYSTEM_PYTHON_ABS="/venv/main/bin/python3"
+        elif [ -f "/usr/bin/python3" ]; then
+            SYSTEM_PYTHON_ABS="/usr/bin/python3"
+        fi
+    fi
+fi
+
+cd "$INSTALL_DIR/base"
+print_info "Running setup.py install with $SYSTEM_PYTHON_ABS..."
+$SYSTEM_PYTHON_ABS setup.py install
+
+print_success "Camera tracking extensions compiled and installed"
+
+# Restore PATH
+export PATH="$OLD_PATH_COMPILE"
+
+###############################################################################
+# Step 8: Download required checkpoints
+###############################################################################
+
+print_step "8/8" "Downloading required checkpoints"
+
+cd "$INSTALL_DIR"
+
+# Depth-Anything checkpoint
 print_info "Preparing Depth-Anything checkpoint directory"
 mkdir -p "$INSTALL_DIR/Depth-Anything/checkpoints"
 cd "$INSTALL_DIR/Depth-Anything/checkpoints"
@@ -638,14 +578,13 @@ else
     print_info "Depth-Anything checkpoint already present"
 fi
 
+# RAFT checkpoint
 print_info "Preparing RAFT checkpoint directory"
 mkdir -p "$INSTALL_DIR/cvd_opt"
 cd "$INSTALL_DIR/cvd_opt"
 
 if [ ! -f "raft-things.pth" ]; then
     print_info "Downloading RAFT checkpoint (~250 MB) via gdown..."
-    # Official link in README: https://drive.google.com/drive/folders/1sWDsfuZ3Up38EUQt7-JDTT1HcGHuJgvT
-    # The file ID used here is the same as in the previous installer.
     if gdown "1JLdBfNpOYGpwI5YvFePLz5hWXqZXpxMR" -O raft-things.pth --quiet; then
         print_success "RAFT checkpoint downloaded"
     else
@@ -658,15 +597,41 @@ else
 fi
 
 ###############################################################################
-# Final summary
+# Final summary and verification
 ###############################################################################
 
-print_header "MegaSaM setup complete (dependencies only)"
+print_header "MegaSaM Installation Complete"
 
 echo "Repository path : $INSTALL_DIR"
-echo "Env type        : $ENV_TYPE"
-echo "Activate with   :"
-echo "  $ENV_ACTIVATE_CMD"
+echo "Python command  : $PYTHON_CMD"
+echo "Python path     : $($PYTHON_CMD -c 'import sys; print(sys.executable)')"
+echo ""
+
+# Version check
+print_info "=== VERSION CHECK ==="
+$PYTHON_CMD - << 'VERCHECK'
+import sys
+print("Python:", sys.version.split()[0])
+try:
+    import torch
+    print("PyTorch:", torch.__version__)
+    print("CUDA available:", torch.cuda.is_available())
+    if torch.cuda.is_available():
+        print("CUDA version (torch):", torch.version.cuda)
+        try:
+            print("GPU:", torch.cuda.get_device_name(0))
+        except Exception:
+            pass
+except Exception as e:
+    print("PyTorch import error:", e)
+
+try:
+    import xformers
+    print("xformers:", xformers.__version__)
+except Exception as e:
+    print("xformers import error:", e)
+VERCHECK
+
 echo ""
 echo "Checkpoints:"
 if [ -f "$INSTALL_DIR/Depth-Anything/checkpoints/depth_anything_vitl14.pth" ]; then
@@ -682,13 +647,25 @@ else
 fi
 
 echo ""
-print_info "Next typical steps (inside the container):"
-echo "  1) $ENV_ACTIVATE_CMD"
-echo "  2) cd \"$INSTALL_DIR\""
-echo "  3) Edit paths in scripts under mono_depth_scripts/, tools/, cvd_opt/ as needed"
-echo "  4) Run, for example:"
-echo "       ./mono_depth_scripts/run_mono-depth_demo.sh"
-echo "       ./tools/evaluate_demo.sh"
-echo "       ./cvd_opt/cvd_opt_demo.sh"
+print_info "Installation complete! All dependencies are installed in system Python."
+print_info "No conda environment activation needed - just use python3/python directly."
 echo ""
-
+print_info "Next steps:"
+echo "  1. Navigate to repository:"
+echo "     cd $INSTALL_DIR"
+echo ""
+echo "  2. Edit paths in scripts as needed:"
+echo "     - mono_depth_scripts/run_mono-depth_demo.sh"
+echo "     - tools/evaluate_demo.sh"
+echo "     - cvd_opt/cvd_opt_demo.sh"
+echo ""
+echo "  3. Run MegaSaM (using system Python):"
+echo "     $PYTHON_CMD mono_depth_scripts/run_mono-depth_demo.sh"
+echo "     $PYTHON_CMD tools/evaluate_demo.sh"
+echo "     $PYTHON_CMD cvd_opt/cvd_opt_demo.sh"
+echo ""
+echo "  Or if scripts use shebang, just:"
+echo "     ./mono_depth_scripts/run_mono-depth_demo.sh"
+echo "     ./tools/evaluate_demo.sh"
+echo "     ./cvd_opt/cvd_opt_demo.sh"
+echo ""
