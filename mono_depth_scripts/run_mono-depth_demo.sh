@@ -20,7 +20,7 @@ evalset=(
   breakdance-flare
 )
 
-DATA_DIR=DAVIS/swing
+DATA_DIR=DAVIS
 
 # Run DepthAnything
 for seq in ${evalset[@]}; do
