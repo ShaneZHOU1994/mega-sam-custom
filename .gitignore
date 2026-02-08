@@ -2,6 +2,9 @@ outputs/
 UniDepth_outputs/
 Depth-Anything_video_visualization/
 
+*_colmap/
+*_csv/
+*.fbx
 *.mp4
 
 */__pycache__/

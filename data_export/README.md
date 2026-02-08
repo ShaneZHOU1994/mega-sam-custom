@@ -88,6 +88,16 @@ python -m data_export.export_colmap outputs/swing_droid.npz -o swing_colmap --no
 **Using in COLMAP:**  
 Point COLMAP’s “sparse model” (or “Import model”) to the output directory and choose **text** format. Image paths in `images.txt` are relative to that directory (e.g. `images/frame_000000.jpg`).
 
+## Export to FBX for Unreal Engine 5 (Camera Poses)
+
+Convert poses CSV (COLMAP convention) to an FBX camera animation for import into **Unreal Engine 5.5**.
+
+- **Launcher:** `python -m data_export.run_export_fbx <poses.csv> <output.fbx> [--fps 30]`
+- **Conversion utilities:** `data_export.colmap_to_ue` — `load_poses_csv()`, `colmap_pose_to_ue()`, `export_ue_poses_csv()`
+- **Full instructions:** See **[UE5_CAMERA_IMPORT.md](UE5_CAMERA_IMPORT.md)** in this folder (prerequisites, step-by-step UE5 import, troubleshooting).
+
+**Requirements:** Python 3.8+, NumPy, and **Blender** (on PATH or set `BLENDER_EXE`).
+
 ## Requirements
 
 - Python 3.8+
