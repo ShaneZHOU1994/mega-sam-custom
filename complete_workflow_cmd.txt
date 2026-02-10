@@ -1,0 +1,30 @@
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPaemHDSDhgfgqflL34lZcTuFHBjBSBaKQu3Mmu7Ixsv vast-ai-key
+
+scp -P 33017 -i C:\Users\zhous\.ssh\id_ed25519 -r dependencies_install/megasam_complete_install.sh root@96.244.239.85:/workspace/
+
+sed -i 's/\r$//' megasam_complete_install.sh
+chmod +x megasam_complete_install.sh
+./megasam_complete_install.sh
+
+
+
+scp -P 33017 -i C:\Users\zhous\.ssh\id_ed25519 -r marie_camera_1.mp4 root@96.244.239.85:/workspace/mega-sam/
+
+./video_preprocess/run_extract_frames.sh marie_camera_1.mp4 --fps 30
+
+scp -P 33017 -i C:\Users\zhous\.ssh\id_ed25519 -r root@96.244.239.85:/workspace/mega-sam/outputs .
+
+rm -rf ./DAVIS/upload_frames
+
+python -m data_export.export_csv outputs/marie1_droid.npz -o marie1_csv
+python -m data_export.export_colmap outputs/marie1_droid.npz -o marie1_colmap
+
+set BLENDER_EXE=D:\Program Files\Blender Foundation\Blender 5.0\blender.exe
+
+python -m data_export.run_export_fbx plaza_csv\poses.csv plaza_camera.fbx --fps 30
+
+python -m data_export.run_export_fbx_colmap plaza_10s_colmap plaza_camera.fbx --scale 0.01 --swap-yz --reverse
+
+python -m data_export.run_export_fbx marie1_csv\poses.csv marie1_v0.fbx --fps 30
+python -m data_export.run_export_fbx_colmap marie1_colmap marie1_colmap_v0.fbx --scale 0.01 --swap-yz --reverse --fps 30
+

@@ -61,6 +61,25 @@ def qvec2rotmat(qvec: np.ndarray) -> np.ndarray:
     ], dtype=np.float64)
 
 
+def rotmat2qvec(R: np.ndarray) -> np.ndarray:
+    """Rotation matrix to quaternion (COLMAP order: qw, qx, qy, qz)."""
+    Rxx, Ryx, Rzx, Rxy, Ryy, Rzy, Rxz, Ryz, Rzz = R.flat
+    K = (
+        np.array([
+            [Rxx - Ryy - Rzz, 0, 0, 0],
+            [Ryx + Rxy, Ryy - Rxx - Rzz, 0, 0],
+            [Rzx + Rxz, Rzy + Ryz, Rzz - Rxx - Ryy, 0],
+            [Ryz - Rzy, Rzx - Rxz, Rxy - Ryx, Rxx + Ryy + Rzz],
+        ])
+        / 3.0
+    )
+    eigvals, eigvecs = np.linalg.eigh(K)
+    qvec = eigvecs[[3, 0, 1, 2], np.argmax(eigvals)].copy()
+    if qvec[0] < 0:
+        qvec *= -1
+    return qvec
+
+
 def colmap_pose_to_ue(
     qvec: np.ndarray,
     tvec: np.ndarray,
@@ -83,9 +102,11 @@ def colmap_pose_to_ue(
     camera_center_colmap = -R_w2c.T @ t_w2c
     # Camera-to-world rotation: R_c2w = R^T
     R_c2w_colmap = R_w2c.T
-    # Apply axis remap to UE5
+    # Apply axis remap to UE5: for coordinate transform M,
+    # position: P_ue = M @ P_colmap
+    # rotation: R_ue = M @ R_colmap @ M.T
     position_ue = _COLMAP_TO_UE_AXIS @ camera_center_colmap
-    rotation_ue = _COLMAP_TO_UE_AXIS @ R_c2w_colmap
+    rotation_ue = _COLMAP_TO_UE_AXIS @ R_c2w_colmap @ _COLMAP_TO_UE_AXIS.T
     if scale_to_cm:
         position_ue = position_ue * 100.0
     return position_ue, rotation_ue

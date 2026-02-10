@@ -88,12 +88,49 @@ python -m data_export.export_colmap outputs/swing_droid.npz -o swing_colmap --no
 **Using in COLMAP:**  
 Point COLMAP’s “sparse model” (or “Import model”) to the output directory and choose **text** format. Image paths in `images.txt` are relative to that directory (e.g. `images/frame_000000.jpg`).
 
+## Trajectory control (before FBX)
+
+Transform camera trajectory data (flip axis, reverse path, swap X/Y/Z) on CSV or COLMAP input:
+
+- **Script:** `python -m data_export.trajectory_control <input> <output> [--flip-x] [--flip-y] [--flip-z] [--reverse] [--swap-xy] [--swap-yz] [--scale]`
+- **Input:** Path to poses CSV or COLMAP `images.txt` (or directory containing it).
+- **Output:** Path to CSV or `images.txt` (or directory). Use `--format csv` or `--format colmap` to force format; otherwise auto-detected from path.
+- **Options:** `--flip-x`, `--flip-y`, `--flip-z` (flip world axis), `--reverse` (end→begin), `--swap-xy`, `--swap-yz`, `--scale` (path scale factor).
+
+**Important:** Transformation fixes applied (Feb 2025) - world-space rotation transformations now use correct similarity transformation formula.
+
+Example: reverse path and write CSV, then export FBX:  
+`python -m data_export.trajectory_control plaza_csv/poses.csv plaza_csv/poses_reversed.csv --reverse`  
+`python -m data_export.run_export_fbx plaza_csv/poses_reversed.csv plaza_camera_reversed.fbx`
+
+### Debug and Analysis Tools
+
+**Analyze trajectory continuity:**
+```bash
+python -m data_export.debug_trajectory plaza_csv/poses.csv --max-frames 50
+```
+Shows frame-by-frame position/rotation changes and flags large jumps.
+
+**Compare two trajectories:**
+```bash
+python -m data_export.compare_trajectories poses1.csv poses2.csv --max-frames 20
+```
+Shows differences between two trajectory files.
+
+**Test transformation correctness:**
+```bash
+python -m data_export.test_transformation_fix
+```
+Runs comprehensive tests to verify transformations preserve trajectory continuity.
+
 ## Export to FBX for Unreal Engine 5 (Camera Poses)
 
 Convert poses CSV (COLMAP convention) to an FBX camera animation for import into **Unreal Engine 5.5**.
 
-- **Launcher:** `python -m data_export.run_export_fbx <poses.csv> <output.fbx> [--fps 30]`
-- **Conversion utilities:** `data_export.colmap_to_ue` — `load_poses_csv()`, `colmap_pose_to_ue()`, `export_ue_poses_csv()`
+- **Launcher (CSV):** `python -m data_export.run_export_fbx <poses.csv> <output.fbx> [--fps 30]`
+- **Launcher (COLMAP):** `python -m data_export.run_export_fbx_colmap <colmap_dir_or_images.txt> <output.fbx>` — reads COLMAP `images.txt`, applies optional transform (scale, flip, swap, reverse), then exports FBX. Example:  
+  `python -m data_export.run_export_fbx_colmap plaza_10s_colmap plaza_camera.fbx --scale 0.01 --swap-yz --reverse`
+- **Conversion utilities:** `data_export.colmap_to_ue` — `load_poses_csv()`, `colmap_pose_to_ue()`, `rotmat2qvec()`, `export_ue_poses_csv()`
 - **Full instructions:** See **[UE5_CAMERA_IMPORT.md](UE5_CAMERA_IMPORT.md)** in this folder (prerequisites, step-by-step UE5 import, troubleshooting).
 
 **Requirements:** Python 3.8+, NumPy, and **Blender** (on PATH or set `BLENDER_EXE`).

@@ -16,12 +16,14 @@
 
 
 evalset=(
-  swing
-  breakdance-flare
+  upload_frames
 )
 
-DATA_PATH=/home/zhengqili/filestore/DAVIS/DAVIS/JPEGImages/480p
+DATA_PATH=DAVIS
 
+# Output: flow cache -> cache_flow/<seq>/ (intermediate);
+#         CVD depth  -> outputs/<seq>_sgd_cvd_hr.npz (same as evaluate_demo outputs/)
+OUTPUT_DIR=outputs
 
 # Run Raft Optical Flows
 for seq in ${evalset[@]}; do
@@ -31,10 +33,11 @@ for seq in ${evalset[@]}; do
   --scene_name $seq --mixed_precision
 done
 
-# Run CVD optmization
+# Run CVD optimization (writes to OUTPUT_DIR)
 for seq in ${evalset[@]}; do
   CUDA_VISIBLE_DEVICES=0 python cvd_opt/cvd_opt.py \
   --scene_name $seq \
-  --w_grad 2.0 --w_normal 5.0
+  --w_grad 2.0 --w_normal 5.0 \
+  --output_dir $OUTPUT_DIR
 done
 

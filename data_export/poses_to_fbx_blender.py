@@ -98,8 +98,18 @@ def _clear_scene() -> None:
 
 
 # Blender camera default: local -Y = forward. UE export: we want that to be UE +X (forward).
-# So we need R_blender such that R_blender @ (0,-1,0) = R_ue @ (1,0,0). Hence R_blender = R_ue @ R_convert.
-_R_CONVERT_BLENDER = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+# IMPORTANT: The FBX exporter with axis_forward="X", axis_up="Z" handles the coordinate conversion.
+# We need to set the camera orientation in Blender's world space such that when exported,
+# it matches the UE5 orientation.
+# 
+# Blender world: X=right, Y=forward, Z=up
+# UE5 world: X=forward, Y=right, Z=up
+# So: Blender Y = UE5 X, Blender X = UE5 Y, Blender Z = UE5 Z
+_UE_TO_BLENDER_WORLD = np.array([
+    [0.0, 1.0, 0.0],   # Blender X (right) = UE5 Y (right)
+    [1.0, 0.0, 0.0],   # Blender Y (forward) = UE5 X (forward)
+    [0.0, 0.0, 1.0],   # Blender Z (up) = UE5 Z (up)
+], dtype=np.float64)
 
 
 def _create_camera(name: str = "Camera") -> bpy.types.Object:
@@ -122,12 +132,42 @@ def _set_keyframes(
     for frame_id, qvec, tvec in poses:
         frame = int(frame_id)
         pos_ue, R_ue = colmap_pose_to_ue(qvec, tvec, scale_to_cm=scale_to_cm)
-        # Blender camera looks along -Y; we need that to be UE forward (+X). R_blender = R_ue @ R_convert.
-        R_blender = R_ue @ _R_CONVERT_BLENDER
+        
+        # Transform from UE5 world coordinates to Blender world coordinates
+        # UE5: X=forward, Y=right, Z=up
+        # Blender: X=right, Y=forward, Z=up
+        # Position: simple axis swap
+        pos_blender = np.array([pos_ue[1], pos_ue[0], pos_ue[2]], dtype=np.float64)
+        
+        # Rotation: similarity transformation for coordinate change
+        R_blender = _UE_TO_BLENDER_WORLD @ R_ue @ _UE_TO_BLENDER_WORLD.T
+        
+        # CRITICAL: Blender camera convention
+        # R_ue is camera-to-world where columns are [forward | right | up] in UE5
+        # After coordinate transform, R_blender columns are [right | forward | up] in Blender world
+        # BUT: Blender camera's LOCAL axes are [right | up | backward]
+        # Blender camera looks along LOCAL -Z, which is the NEGATIVE of the 3rd column
+        #
+        # We need R_blender where:
+        #   Column 0 = camera's right in world
+        #   Column 1 = camera's up in world  
+        #   Column 2 = camera's BACKWARD in world (camera looks along -column2)
+        #
+        # Current R_blender = [right | forward | up]
+        # We need:           [right | up | -forward]
+        #
+        # Solution: Swap columns 1 and 2, and negate the new column 2
+        R_blender_corrected = np.column_stack([
+            R_blender[:, 0],   # right stays
+            R_blender[:, 2],   # up (was column 2)
+            -R_blender[:, 1],  # backward = -forward (was column 1)
+        ])
+        R_blender = R_blender_corrected
+        
         euler_rad = rotation_matrix_to_euler_xyz_rad(R_blender)
         # Timeline frame: 1-based in Blender UI, we use frame_id + 1 for clarity
         scene.frame_set(frame + 1)
-        cam.location = (float(pos_ue[0]), float(pos_ue[1]), float(pos_ue[2]))
+        cam.location = (float(pos_blender[0]), float(pos_blender[1]), float(pos_blender[2]))
         cam.rotation_euler = (float(euler_rad[0]), float(euler_rad[1]), float(euler_rad[2]))
         cam.keyframe_insert(data_path="location", frame=frame + 1)
         cam.keyframe_insert(data_path="rotation_euler", frame=frame + 1)

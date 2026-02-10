@@ -494,7 +494,80 @@ print_info "Using system Python: $SYSTEM_PYTHON_ABS"
 print_info "Python version: $($SYSTEM_PYTHON_ABS --version)"
 
 print_info "Upgrading pip, setuptools, wheel..."
-$SYSTEM_PYTHON_ABS -m pip install --upgrade pip setuptools wheel -q 2>&1 | grep -v "WARNING: Running pip as the 'root' user" || true
+$SYSTEM_PYTHON_ABS -m pip install --upgrade pip wheel 2>&1 | grep -v "WARNING: Running pip as the 'root' user" || true
+
+# Ensure pkg_resources is available (required for torch.utils.cpp_extension)
+# This is critical for compiling CUDA extensions with PyTorch
+print_info "Verifying pkg_resources availability..."
+
+# First check if it's already available
+if $SYSTEM_PYTHON_ABS -c "import pkg_resources" 2>/dev/null; then
+    print_success "pkg_resources is already available"
+else
+    print_info "pkg_resources not found, installing setuptools with pkg_resources support..."
+    
+    # Try multiple methods to ensure pkg_resources is installed
+    
+    # Method 1: Install setuptools < 70.0.0 (versions that include pkg_resources)
+    print_info "Method 1: Installing setuptools < 70.0.0..."
+    $SYSTEM_PYTHON_ABS -m pip install --upgrade --force-reinstall "setuptools>=65.0.0,<70.0.0" 2>&1 | grep -v "WARNING: Running pip as the 'root' user" || true
+    
+    if $SYSTEM_PYTHON_ABS -c "import pkg_resources" 2>/dev/null; then
+        print_success "pkg_resources installed successfully (Method 1)"
+    else
+        # Method 2: Try installing setuptools without version constraint
+        print_info "Method 1 failed. Method 2: Force reinstalling latest setuptools..."
+        $SYSTEM_PYTHON_ABS -m pip install --upgrade --force-reinstall setuptools 2>&1 | grep -v "WARNING: Running pip as the 'root' user" || true
+        
+        if $SYSTEM_PYTHON_ABS -c "import pkg_resources" 2>/dev/null; then
+            print_success "pkg_resources installed successfully (Method 2)"
+        else
+            # Method 3: Install specific known-good version
+            print_info "Method 2 failed. Method 3: Installing setuptools 69.5.1..."
+            $SYSTEM_PYTHON_ABS -m pip install --upgrade --force-reinstall "setuptools==69.5.1" 2>&1 | grep -v "WARNING: Running pip as the 'root' user" || true
+            
+            if $SYSTEM_PYTHON_ABS -c "import pkg_resources" 2>/dev/null; then
+                print_success "pkg_resources installed successfully (Method 3)"
+            else
+                # Method 4: Last resort - try to install from system packages
+                print_info "Method 3 failed. Method 4: Checking system packages..."
+                if command -v apt-get >/dev/null 2>&1; then
+                    apt-get update -qq
+                    apt-get install -y -qq python3-setuptools python3-pkg-resources 2>&1 | grep -v "WARNING" || true
+                fi
+                
+                if $SYSTEM_PYTHON_ABS -c "import pkg_resources" 2>/dev/null; then
+                    print_success "pkg_resources installed successfully (Method 4 - system packages)"
+                else
+                    print_error "All methods failed to install pkg_resources."
+                    print_error "This is required for compiling CUDA extensions with PyTorch."
+                    echo ""
+                    print_info "Diagnostic information:"
+                    echo "  Python: $SYSTEM_PYTHON_ABS"
+                    echo "  Python version: $($SYSTEM_PYTHON_ABS --version)"
+                    echo "  Pip version: $($SYSTEM_PYTHON_ABS -m pip --version)"
+                    echo ""
+                    print_info "Checking what's installed:"
+                    $SYSTEM_PYTHON_ABS -m pip list | grep -i setup || echo "  No setuptools found"
+                    echo ""
+                    print_info "Python path:"
+                    $SYSTEM_PYTHON_ABS -c "import sys; print('\n'.join(sys.path))"
+                    echo ""
+                    print_error "Please try manually:"
+                    echo "  1. $SYSTEM_PYTHON_ABS -m pip install --upgrade --force-reinstall setuptools"
+                    echo "  2. $SYSTEM_PYTHON_ABS -c 'import pkg_resources; print(pkg_resources.__version__)'"
+                    export PATH="$OLD_PATH_PIP"
+                    exit 1
+                fi
+            fi
+        fi
+    fi
+fi
+
+# Final verification with detailed output
+print_info "Final verification of pkg_resources..."
+$SYSTEM_PYTHON_ABS -c "import pkg_resources; import setuptools; print('  setuptools:', setuptools.__version__); print('  pkg_resources: available')" 2>&1 | grep -v "DeprecationWarning"
+print_success "pkg_resources is ready for CUDA extension compilation"
 
 print_info "Installing additional packages into system Python..."
 $SYSTEM_PYTHON_ABS -m pip install -q \

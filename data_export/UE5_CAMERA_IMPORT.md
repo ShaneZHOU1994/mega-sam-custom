@@ -5,12 +5,13 @@ This guide describes how to convert camera pose data (CSV or COLMAP format) into
 ## Pipeline Overview
 
 ```
-poses.csv (COLMAP convention)  →  colmap_to_ue  →  FBX (camera + keyframes)  →  UE5 Sequencer
+poses.csv or COLMAP images.txt  →  [optional: trajectory_control]  →  colmap_to_ue  →  FBX  →  UE5 Sequencer
 ```
 
-1. **Conversion**: COLMAP world-to-camera (right-handed, X right / Y down / Z forward) → UE5 camera-to-world (left-handed, X forward / Y right / Z up).
-2. **Export**: A Python script run inside **Blender** (headless) creates one camera with keyframes and exports FBX with Unreal-friendly axes (Forward X, Up Z).
-3. **Import**: In UE5 Sequencer, add a Cine Camera Actor and import the FBX to apply the animation.
+1. **Optional trajectory control**: Use `data_export.trajectory_control` to flip axis (X/Y/Z), reverse path (end→begin), or swap X↔Y on CSV or COLMAP data before conversion.
+2. **Conversion**: COLMAP world-to-camera (right-handed, X right / Y down / Z forward) → UE5 camera-to-world (left-handed, X forward / Y right / Z up).
+3. **Export**: A Python script run inside **Blender** (headless) creates one camera with keyframes and exports FBX with Unreal-friendly axes (Forward X, Up Z).
+4. **Import**: In UE5 Sequencer, add a Cine Camera Actor and import the FBX to apply the animation.
 
 ---
 
@@ -45,7 +46,77 @@ If you only have COLMAP text model (`images.txt`, `cameras.txt`), you can either
 - Export poses to CSV using your pipeline, or
 - Use `colmap_read_model.py` to read `images.txt` and feed the same (qw, qx, qy, qz, tx, ty, tz) into the conversion. The conversion script in this folder expects **CSV**; for COLMAP-only you’d write a small script that reads COLMAP and calls `colmap_pose_to_ue()` per image.
 
+**Direct COLMAP → FBX:** Use `python -m data_export.run_export_fbx_colmap <colmap_dir_or_images.txt> <output.fbx>` to read `images.txt`, apply optional transform (`--scale`, `--swap-yz`, `--reverse`, etc.), then export FBX. Only `images.txt` is required for the camera path. Example: `run_export_fbx_colmap plaza_10s_colmap plaza_camera.fbx --scale 0.01 --swap-yz`.
+
 ---
+
+## Step 0 (optional): Transform trajectory before FBX
+
+If you need to flip an axis, reverse the path, swap axes, or scale the path, run **trajectory_control** on your CSV or COLMAP `images.txt` first:
+
+```bash
+# Reverse path (end → begin)
+python -m data_export.trajectory_control plaza_csv/poses.csv plaza_csv/poses_reversed.csv --reverse
+
+# Flip world Z and swap X/Y
+python -m data_export.trajectory_control plaza_colmap/images.txt plaza_colmap/images_flipped.txt --flip-z --swap-xy
+
+# Swap Y and Z for Z-up in UE5 (when camera appears Z-to-left horizontal)
+python -m data_export.trajectory_control input/poses.csv output/poses.csv --swap-yz
+
+# Scale path 100× smaller (e.g. to match 3D environment scale)
+python -m data_export.trajectory_control input/poses.csv output/poses.csv --scale 0.01
+
+# Suggest --scale from depth_summary.csv (same dir as input if path omitted)
+python -m data_export.trajectory_control plaza_10s_csv/poses.csv out.csv --suggest-scale-from-depth
+
+# Use suggested scale from depth_summary.csv for this run (overrides --scale)
+python -m data_export.trajectory_control plaza_10s_csv/poses.csv out.csv --scale-from-depth --target-ue-cm 200
+```
+
+**Scale from depth:** If you have `depth_summary.csv` (columns: `frame_id`, `depth_min`, `depth_max`, `depth_mean`, `depth_median`) next to your poses CSV, use `--suggest-scale-from-depth` to print a suggested `--scale` so that mean scene depth maps to a target size in UE (default 200 cm). Use `--scale-from-depth` to apply that scale in the same run; override with `--target-ue-cm` to change the target.
+
+Then use the **output** path as input to `run_export_fbx` (e.g. `plaza_csv/poses_reversed.csv`).
+
+### Transform + FBX in one step (Windows)
+
+From repo root, run **`run_export_fbx_with_transform.bat`** with any poses CSV to transform (Z-up, scale, reverse) and export FBX in one go:
+
+```cmd
+cd /d D:\PyProjects\mega-sam-custom
+data_export\run_export_fbx_with_transform.bat input_poses.csv [output.fbx]
+```
+
+- **input_poses.csv**: path to CSV with columns `frame_id`, `qw`, `qx`, `qy`, `qz`, `tx`, `ty`, `tz`.
+- **output.fbx**: optional; if omitted, output is `*_camera.fbx` next to the input CSV.
+
+Optional env vars (set before running):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRANSFORM_SCALE` | 0.01 | Path scale factor (e.g. 0.1, 0.001). |
+| `TRANSFORM_REVERSE` | 1 | 1 = reverse path (end→begin), 0 = keep direction. |
+| `EXPORT_FPS` | 30 | Frame rate for FBX. |
+
+Example: `set TRANSFORM_SCALE=0.1` then run the batch.
+
+### Example: plaza_10s_csv (Z-up, scale, reverse)
+
+For data like `plaza_10s_csv/` where the camera orientation is Z-to-left in UE5, the path scale is too large, or you want the camera to move from end to begin:
+
+**Option A – One-shot (recommended):**
+
+```cmd
+cd /d D:\PyProjects\mega-sam-custom
+data_export\run_export_fbx_with_transform.bat plaza_10s_csv\poses.csv plaza_10s_camera.fbx
+```
+
+**Option B – Two steps (for tuning):**
+
+1. Transform: `python -m data_export.trajectory_control plaza_10s_csv/poses.csv plaza_10s_csv/poses_ue5.csv --swap-yz --scale 0.01 --reverse`
+2. Export FBX: `python -m data_export.run_export_fbx plaza_10s_csv/poses_ue5.csv plaza_10s_camera.fbx --fps 30`
+
+Then import `plaza_10s_camera.fbx` in UE5 Sequencer onto a Cine Camera Actor as in Step 2 below.
 
 ## Step 1: Convert Poses to UE5 and Export FBX
 
@@ -134,7 +205,8 @@ Output columns: `frame_id`, `px`, `py`, `pz`, `roll_deg`, `pitch_deg`, `yaw_deg`
 
 | Script / module              | Purpose |
 |-----------------------------|--------|
-| `colmap_to_ue.py`           | COLMAP → UE5 coordinate conversion; `load_poses_csv()`, `colmap_pose_to_ue()`, `export_ue_poses_csv()`. |
+| `trajectory_control.py`      | Transform trajectory **before** FBX: flip X/Y/Z, reverse path, swap X↔Y or Y↔Z, scale path. |
+| `colmap_to_ue.py`           | COLMAP → UE5 coordinate conversion; `load_poses_csv()`, `colmap_pose_to_ue()`, `rotmat2qvec()`, `export_ue_poses_csv()`. |
 | `poses_to_fbx_blender.py`   | Run **inside Blender** (`blender --background --python ...`): reads CSV, creates camera keyframes, exports FBX (Forward X, Up Z). |
 | `run_export_fbx.py`         | Launcher: finds Blender, runs `poses_to_fbx_blender.py` with your CSV and output FBX path. |
 
@@ -160,7 +232,7 @@ Output columns: `frame_id`, `px`, `py`, `pz`, `roll_deg`, `pitch_deg`, `yaw_deg`
   - The scripts convert COLMAP (camera looks along +Z) to UE (camera looks along +X). If your source used a different convention, the conversion in `colmap_to_ue.py` may need to be adjusted.
 
 - **Scale looks wrong in UE**  
-  - Use `--scale-to-cm` (default) if your CSV/COLMAP is in **meters**; use `--no-scale-to-cm` if your data is already in centimeters or you want to scale in UE.
+  - Use **trajectory_control** `--scale` (e.g. `0.01`, `0.1`) to shrink the camera path before FBX so it matches your 3D environment. Use `--scale-to-cm` (default) in `run_export_fbx` if your CSV is in meters; use `--no-scale-to-cm` if you want to keep units as-is.
 
 - **FPS / timing**  
   - Export with `--fps` matching your source video (e.g. 30 or 24). Set the same frame rate in the UE FBX import dialog so the sequence length and timing match.

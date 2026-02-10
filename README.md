@@ -110,6 +110,7 @@ After running `run_mono-depth_demo.sh` and `evaluate_demo.sh` on a remote VM, ou
 | Mono-depth (Depth-Anything) | `Depth-Anything/video_visualization/<seq>/` (e.g. `swing`, `breakdance-flare`) |
 | Mono-depth (UniDepth) | `UniDepth/outputs/<seq>/` (per-frame `.npz`) |
 | Camera tracking (evaluate_demo) | `outputs/<scene>_droid.npz` (e.g. `outputs/swing_droid.npz`, `outputs/breakdance-flare_droid.npz`) |
+| CVD depth (cvd_opt_demo) | `outputs/<scene>_sgd_cvd_hr.npz` (e.g. `outputs/upload_frames_sgd_cvd_hr.npz`) |
 
 **Where to get SSH host and port (vast.ai)**  
 1. Open [vast.ai console](https://cloud.vast.ai/) → your instance.  
