@@ -88,6 +88,24 @@ def _parse_args() -> argparse.Namespace:
         dest="scale_to_cm",
         help="Keep positions in meters.",
     )
+    parser.add_argument(
+        "--focal-length-px",
+        type=float,
+        default=None,
+        help="Focal length in pixels (from COLMAP cameras.txt).",
+    )
+    parser.add_argument(
+        "--image-width",
+        type=int,
+        default=None,
+        help="Image width in pixels (from COLMAP cameras.txt).",
+    )
+    parser.add_argument(
+        "--image-height",
+        type=int,
+        default=None,
+        help="Image height in pixels (from COLMAP cameras.txt).",
+    )
     return parser.parse_args(argv)
 
 
@@ -112,11 +130,38 @@ _UE_TO_BLENDER_WORLD = np.array([
 ], dtype=np.float64)
 
 
-def _create_camera(name: str = "Camera") -> bpy.types.Object:
-    """Create a camera (default Blender orientation: looks along -Y)."""
+def _create_camera(
+    name: str = "Camera",
+    focal_length_mm: float | None = None,
+    sensor_width_mm: float = 36.0,
+    sensor_height_mm: float | None = None,
+) -> bpy.types.Object:
+    """Create a camera with specified focal length and sensor dimensions.
+    
+    Args:
+        name: Camera object name
+        focal_length_mm: Focal length in millimeters. If None, uses Blender default (50mm)
+        sensor_width_mm: Sensor width in millimeters (default: 36mm for full frame)
+        sensor_height_mm: Sensor height in millimeters. If None, Blender calculates from aspect ratio
+    """
     bpy.ops.object.camera_add()
     cam = bpy.context.active_object
     cam.name = name
+    
+    # Set camera intrinsics
+    if focal_length_mm is not None:
+        cam.data.lens = focal_length_mm
+    
+    # Set sensor dimensions
+    cam.data.sensor_width = sensor_width_mm
+    if sensor_height_mm is not None:
+        cam.data.sensor_height = sensor_height_mm
+        # Use AUTO fit mode when both dimensions are specified
+        # This ensures both width and height are respected
+        cam.data.sensor_fit = 'AUTO'
+    else:
+        cam.data.sensor_fit = 'HORIZONTAL'
+    
     return cam
 
 
@@ -213,8 +258,36 @@ def main() -> int:
         print("Error: no poses in CSV")
         return 1
 
+    # Calculate focal length and sensor dimensions from COLMAP intrinsics
+    focal_length_mm = None
+    sensor_width_mm = 36.0  # Default: full frame sensor
+    sensor_height_mm = None
+    
+    if args.focal_length_px and args.image_width and args.image_height:
+        # Convert focal length from pixels to millimeters
+        # Formula: focal_mm = (focal_px * sensor_width_mm) / image_width_px
+        focal_length_mm = (args.focal_length_px * sensor_width_mm) / args.image_width
+        
+        # Calculate sensor height from aspect ratio to match image dimensions
+        # This ensures correct FOV and aspect ratio in UE5
+        aspect_ratio = args.image_width / args.image_height
+        sensor_height_mm = sensor_width_mm / aspect_ratio
+        
+        print(f"Camera intrinsics: focal_length={args.focal_length_px:.2f}px, "
+              f"image_size={args.image_width}x{args.image_height}")
+        print(f"Converted to Blender: focal_length={focal_length_mm:.2f}mm, "
+              f"sensor_width={sensor_width_mm:.2f}mm, sensor_height={sensor_height_mm:.2f}mm")
+        print(f"Aspect ratio: {aspect_ratio:.4f}")
+    else:
+        print("Using default Blender focal length (50mm) and sensor dimensions")
+
     _clear_scene()
-    cam = _create_camera(name="CineCameraActor")
+    cam = _create_camera(
+        name="CineCameraActor",
+        focal_length_mm=focal_length_mm,
+        sensor_width_mm=sensor_width_mm,
+        sensor_height_mm=sensor_height_mm,
+    )
     _set_keyframes(cam, poses, args.fps, args.scale_to_cm)
     _export_fbx(output_fbx)
 

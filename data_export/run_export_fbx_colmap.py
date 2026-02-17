@@ -132,7 +132,7 @@ def main() -> int:
     output_fbx = Path(args.output_fbx).resolve()
     output_fbx.parent.mkdir(parents=True, exist_ok=True)
 
-    from data_export.trajectory_control import colmap_to_csv
+    from data_export.trajectory_control import colmap_to_csv, get_camera_intrinsics_from_colmap
 
     use_temp = args.csv is None
     if use_temp:
@@ -156,6 +156,17 @@ def main() -> int:
             path_scale=args.scale,
         )
         print(f"Wrote {n_poses} poses to {csv_path}")
+        
+        # Read camera intrinsics from COLMAP cameras.txt
+        colmap_dir = colmap_input if colmap_input.is_dir() else colmap_input.parent
+        camera_intrinsics = get_camera_intrinsics_from_colmap(colmap_dir)
+        if camera_intrinsics:
+            print(f"Found camera intrinsics: {camera_intrinsics['model']} "
+                  f"{camera_intrinsics['width']}x{camera_intrinsics['height']}")
+            if "fx" in camera_intrinsics:
+                print(f"  Focal length: fx={camera_intrinsics['fx']:.2f}, fy={camera_intrinsics['fy']:.2f}")
+        else:
+            print("Warning: cameras.txt not found, using default focal length in Blender")
 
         blender_exe = _find_blender()
         if not blender_exe:
@@ -182,6 +193,14 @@ def main() -> int:
         ]
         if not args.scale_to_cm:
             cmd.append("--no-scale-to-cm")
+        
+        # Pass camera intrinsics if available
+        if camera_intrinsics and "fx" in camera_intrinsics:
+            cmd.extend([
+                "--focal-length-px", str(camera_intrinsics["fx"]),
+                "--image-width", str(camera_intrinsics["width"]),
+                "--image-height", str(camera_intrinsics["height"]),
+            ])
 
         print(f"Running Blender: ... -- {csv_path} {output_fbx} {args.fps}")
         result = subprocess.run(cmd, cwd=str(_REPO_ROOT))

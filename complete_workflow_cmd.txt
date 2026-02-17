@@ -1,6 +1,6 @@
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPaemHDSDhgfgqflL34lZcTuFHBjBSBaKQu3Mmu7Ixsv vast-ai-key
 
-scp -P 33017 -i C:\Users\zhous\.ssh\id_ed25519 -r dependencies_install/megasam_complete_install.sh root@96.244.239.85:/workspace/
+scp -P 51640 -i C:\Users\zhous\.ssh\id_ed25519 -r dependencies_install/megasam_complete_install.sh root@220.82.46.3:/workspace/
 
 sed -i 's/\r$//' megasam_complete_install.sh
 chmod +x megasam_complete_install.sh
@@ -8,11 +8,12 @@ chmod +x megasam_complete_install.sh
 
 
 
-scp -P 33017 -i C:\Users\zhous\.ssh\id_ed25519 -r marie_camera_1.mp4 root@96.244.239.85:/workspace/mega-sam/
+scp -P 51640 -i C:\Users\zhous\.ssh\id_ed25519 -r marie_camera_1.mp4 root@220.82.46.3:/workspace/mega-sam/
 
+chmod +x ./video_preprocess/run_extract_frames.sh
 ./video_preprocess/run_extract_frames.sh marie_camera_1.mp4 --fps 30
 
-scp -P 33017 -i C:\Users\zhous\.ssh\id_ed25519 -r root@96.244.239.85:/workspace/mega-sam/outputs .
+scp -P 51640 -i C:\Users\zhous\.ssh\id_ed25519 -r root@220.82.46.3:/workspace/mega-sam/outputs .
 
 rm -rf ./DAVIS/upload_frames
 

@@ -42,6 +42,38 @@ from data_export.colmap_to_ue import qvec2rotmat, load_poses_csv, rotmat2qvec
 _DEFAULT_TARGET_UE_CM = 200.0
 
 
+def load_colmap_camera_intrinsics(cameras_txt: Path) -> dict[int, dict]:
+    """Load camera intrinsics from COLMAP cameras.txt.
+    
+    Returns dict mapping camera_id to intrinsics dict with keys:
+        model: str (e.g., "PINHOLE")
+        width: int
+        height: int
+        params: list[float] (e.g., [fx, fy, cx, cy] for PINHOLE)
+    """
+    cameras = {}
+    with open(cameras_txt, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            camera_id = int(parts[0])
+            model = parts[1]
+            width = int(parts[2])
+            height = int(parts[3])
+            params = [float(p) for p in parts[4:]]
+            cameras[camera_id] = {
+                "model": model,
+                "width": width,
+                "height": height,
+                "params": params,
+            }
+    return cameras
+
+
 def load_depth_summary(csv_path: Path) -> list[tuple[int, float, float, float, float]]:
     """Load depth_summary.csv with columns frame_id, depth_min, depth_max, depth_mean, depth_median.
 
@@ -296,6 +328,56 @@ def colmap_to_csv(
                 f"{t[0]:.8f}", f"{t[1]:.8f}", f"{t[2]:.8f}",
             ])
     return len(out_rows)
+
+
+def get_camera_intrinsics_from_colmap(
+    colmap_dir: Path,
+) -> dict | None:
+    """Read camera intrinsics from COLMAP directory's cameras.txt.
+    
+    Returns dict with focal length info, or None if cameras.txt not found.
+    For PINHOLE model, returns:
+        {
+            "model": "PINHOLE",
+            "width": int,
+            "height": int,
+            "fx": float,
+            "fy": float,
+            "cx": float,
+            "cy": float,
+        }
+    """
+    cameras_txt = colmap_dir / "cameras.txt"
+    if not cameras_txt.is_file():
+        return None
+    
+    cameras = load_colmap_camera_intrinsics(cameras_txt)
+    if not cameras:
+        return None
+    
+    # Get the first camera (most common case is single camera)
+    camera_id = list(cameras.keys())[0]
+    cam = cameras[camera_id]
+    
+    if cam["model"] == "PINHOLE" and len(cam["params"]) >= 4:
+        return {
+            "model": cam["model"],
+            "width": cam["width"],
+            "height": cam["height"],
+            "fx": cam["params"][0],
+            "fy": cam["params"][1],
+            "cx": cam["params"][2],
+            "cy": cam["params"][3],
+        }
+    
+    # For other models, return raw params
+    return {
+        "model": cam["model"],
+        "width": cam["width"],
+        "height": cam["height"],
+        "params": cam["params"],
+    }
+
 
 
 def main() -> int:
