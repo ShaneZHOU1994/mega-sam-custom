@@ -28,7 +28,9 @@ WORKDIR $INSTALL_DIR
 
 # Ensure base submodule content exists: use COPY if present, else clone during build
 RUN (test -d base && test -f base/setup.py) || \
-    (git clone --depth 1 https://github.com/mega-sam/base.git base && test -f base/setup.py) || \
+    (git clone --recursive --depth 1 https://github.com/mega-sam/base.git base && \
+     git -C base submodule update --init --recursive && \
+     test -f base/setup.py) || \
     (echo "ERROR: base missing and clone failed." && exit 1)
 
 # -----------------------------------------------------------------------------
@@ -84,6 +86,8 @@ RUN python3 -m pip install --upgrade pip wheel \
 # -----------------------------------------------------------------------------
 # 5) Camera tracking extensions (script step 7)
 # -----------------------------------------------------------------------------
+RUN cd base && git submodule update --init --recursive
+
 RUN cd base && python3 setup.py install
 
 WORKDIR $INSTALL_DIR
