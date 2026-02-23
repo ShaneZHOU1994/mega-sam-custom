@@ -1,0 +1,36 @@
+# Exclude data and test outputs (keep only code and dependency config)
+outputs/
+UniDepth_outputs/
+Depth-Anything_video_visualization/
+*_colmap/
+*_csv/
+*.fbx
+*.mp4
+*/images/
+
+# Python
+*/__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.eggs/
+
+# Git and IDE
+.git/
+.gitmodules
+.gitignore
+.cursor/
+*.plan.md
+
+# Docs and local notes (optional: remove if you want them in image)
+# README.md
+# complete_workflow_cmd.txt
+
+# Large checkpoints (bake in Dockerfile or use model cache; uncomment to exclude)
+# Depth-Anything/checkpoints/
+# cvd_opt/raft-things.pth
+# checkpoints/
+
+# DAVIS sample frames (extracted at runtime from video)
+DAVIS/

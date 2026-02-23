@@ -23,7 +23,7 @@ evalset=(
 
 
 for seq in ${evalset[@]}; do
-    CUDA_VISIBLE_DEVICE=0 python camera_tracking_scripts/test_demo.py \
+    CUDA_VISIBLE_DEVICES=0 python camera_tracking_scripts/test_demo.py \
     --datapath=$DATA_PATH/$seq \
     --weights=$CKPT_PATH \
     --scene_name $seq \

@@ -13,19 +13,24 @@ scp -P 51640 -i C:\Users\zhous\.ssh\id_ed25519 -r marie_camera_1.mp4 root@220.82
 chmod +x ./video_preprocess/run_extract_frames.sh
 ./video_preprocess/run_extract_frames.sh marie_camera_1.mp4 --fps 30
 
+./mono_depth_scripts/run_mono-depth_demo.sh
+./tools/evaluate_demo.sh
+
+./cvd_opt/cvd_opt_demo.sh  # Optional
+
 scp -P 51640 -i C:\Users\zhous\.ssh\id_ed25519 -r root@220.82.46.3:/workspace/mega-sam/outputs .
 
 rm -rf ./DAVIS/upload_frames
 
-python -m data_export.export_csv outputs/marie1_droid.npz -o marie1_csv
+# python -m data_export.export_csv outputs/marie1_droid.npz -o marie1_csv
 python -m data_export.export_colmap outputs/marie1_droid.npz -o marie1_colmap
 
-set BLENDER_EXE=D:\Program Files\Blender Foundation\Blender 5.0\blender.exe
+# set BLENDER_EXE=D:\Program Files\Blender Foundation\Blender 5.0\blender.exe
 
-python -m data_export.run_export_fbx plaza_csv\poses.csv plaza_camera.fbx --fps 30
+# python -m data_export.run_export_fbx plaza_csv\poses.csv plaza_camera.fbx --fps 30
 
-python -m data_export.run_export_fbx_colmap plaza_10s_colmap plaza_camera.fbx --scale 0.01 --swap-yz --reverse
+# python -m data_export.run_export_fbx_colmap plaza_10s_colmap plaza_camera.fbx --scale 0.01 --swap-yz --reverse
 
-python -m data_export.run_export_fbx marie1_csv\poses.csv marie1_v0.fbx --fps 30
-python -m data_export.run_export_fbx_colmap marie1_colmap marie1_colmap_v0.fbx --scale 0.01 --swap-yz --reverse --fps 30
+# python -m data_export.run_export_fbx marie1_csv\poses.csv marie1_v0.fbx --fps 30
+# python -m data_export.run_export_fbx_colmap marie1_colmap marie1_colmap_v0.fbx --scale 0.01 --swap-yz --reverse --fps 30
 
