@@ -53,6 +53,31 @@ def _run(cmd, cwd=None, env=None):
 
 def _ensure_video_file(input_data):
     """Return path to video file from input (video_url or video_base64)."""
+    def _sniff_file(path: str) -> dict:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = -1
+        head = b""
+        try:
+            with open(path, "rb") as f:
+                head = f.read(64)
+        except OSError:
+            pass
+
+        head_ascii = ""
+        if head:
+            head_ascii = "".join(chr(b) if 32 <= b < 127 else "." for b in head[:64])
+
+        # MP4 files typically have an 'ftyp' box at offset 4.
+        looks_like_mp4 = len(head) >= 12 and head[4:8] == b"ftyp"
+
+        return {
+            "size_bytes": size,
+            "head_ascii": head_ascii,
+            "looks_like_mp4": looks_like_mp4,
+        }
+
     video_path = input_data.get("video_path")
     if video_path and os.path.isfile(video_path):
         return video_path
@@ -61,14 +86,50 @@ def _ensure_video_file(input_data):
     if video_url:
         out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         out.close()
+        # tmp file hosts often redirect or serve an HTML landing page.
+        # Use curl with redirects enabled and fail on non-2xx.
         r = subprocess.run(
-            ["wget", "-q", "-O", out.name, video_url],
+            [
+                "curl",
+                "-L",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--retry",
+                "3",
+                "--retry-delay",
+                "1",
+                "--connect-timeout",
+                "15",
+                "--max-time",
+                "600",
+                "-A",
+                "Mozilla/5.0",
+                "-o",
+                out.name,
+                video_url,
+            ],
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=650,
         )
         if r.returncode != 0:
-            raise RuntimeError(f"Failed to download video: {r.stderr}")
+            sniff = _sniff_file(out.name)
+            raise RuntimeError(
+                "Failed to download video via curl. "
+                f"url={video_url} "
+                f"curl_stderr={r.stderr.strip() or '(empty)'} "
+                f"size={sniff['size_bytes']} "
+                f"head={sniff['head_ascii']!r}"
+            )
+
+        sniff = _sniff_file(out.name)
+        if sniff["size_bytes"] < 1024 * 50 or not sniff["looks_like_mp4"]:
+            raise RuntimeError(
+                "Downloaded file does not look like a valid MP4. "
+                "This usually means the URL returned HTML (landing page), an error page, or a partial download. "
+                f"url={video_url} size={sniff['size_bytes']} head={sniff['head_ascii']!r}"
+            )
         return out.name
 
     video_b64 = input_data.get("video_base64")
@@ -77,6 +138,12 @@ def _ensure_video_file(input_data):
         out.close()
         with open(out.name, "wb") as f:
             f.write(base64.b64decode(video_b64))
+        sniff = _sniff_file(out.name)
+        if sniff["size_bytes"] < 1024 * 50 or not sniff["looks_like_mp4"]:
+            raise RuntimeError(
+                "Decoded file does not look like a valid MP4. "
+                f"size={sniff['size_bytes']} head={sniff['head_ascii']!r}"
+            )
         return out.name
 
     raise ValueError("Provide one of: video_url, video_base64, or video_path (existing file)")
