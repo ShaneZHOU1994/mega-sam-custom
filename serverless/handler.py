@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # RunPod SDK
@@ -83,6 +84,9 @@ def _ensure_video_file(input_data):
 
 def run_pipeline(video_path: str, fps: float = 30.0):
     """Run full MegaSaM pipeline; replicates complete_workflow_cmd.txt step-by-step."""
+    t_pipeline_start = time.time()
+    timings: dict[str, float] = {}
+
     if not CKPT_MEGASAM.exists():
         raise FileNotFoundError(
             f"Camera tracking checkpoint missing: {CKPT_MEGASAM}. "
@@ -97,22 +101,54 @@ def run_pipeline(video_path: str, fps: float = 30.0):
         f.unlink()
 
     # 1) Extract frames (run_extract_frames.sh)
+    print(f"[MegaSaM] Starting frame extraction at fps={fps} from {video_path}", flush=True)
+    t = time.time()
     r = _run(["bash", "video_preprocess/run_extract_frames.sh", video_path, "--fps", str(fps)])
+    timings["extract_frames_sec"] = time.time() - t
+    print(
+        f"[MegaSaM] Finished frame extraction in {timings['extract_frames_sec']:.2f}s "
+        f"(returncode={r.returncode})",
+        flush=True,
+    )
     if r.returncode != 0:
         raise RuntimeError(f"run_extract_frames.sh failed: {r.stderr or r.stdout}")
 
     # 2) Mono-depth (run_mono-depth_demo.sh)
+    print("[MegaSaM] Starting mono-depth demo", flush=True)
+    t = time.time()
     r = _run(["bash", "mono_depth_scripts/run_mono-depth_demo.sh"])
+    timings["mono_depth_sec"] = time.time() - t
+    print(
+        f"[MegaSaM] Finished mono-depth demo in {timings['mono_depth_sec']:.2f}s "
+        f"(returncode={r.returncode})",
+        flush=True,
+    )
     if r.returncode != 0:
         raise RuntimeError(f"run_mono-depth_demo.sh failed: {r.stderr or r.stdout}")
 
     # 3) Camera tracking (evaluate_demo.sh)
+    print("[MegaSaM] Starting camera tracking (evaluate_demo.sh)", flush=True)
+    t = time.time()
     r = _run(["bash", "tools/evaluate_demo.sh"])
+    timings["camera_tracking_sec"] = time.time() - t
+    print(
+        f"[MegaSaM] Finished camera tracking in {timings['camera_tracking_sec']:.2f}s "
+        f"(returncode={r.returncode})",
+        flush=True,
+    )
     if r.returncode != 0:
         raise RuntimeError(f"evaluate_demo.sh failed: {r.stderr or r.stdout}")
 
     # 4) CVD opt (cvd_opt_demo.sh)
+    print("[MegaSaM] Starting CVD optimization (cvd_opt_demo.sh)", flush=True)
+    t = time.time()
     r = _run(["bash", "cvd_opt/cvd_opt_demo.sh"])
+    timings["cvd_opt_sec"] = time.time() - t
+    print(
+        f"[MegaSaM] Finished CVD optimization in {timings['cvd_opt_sec']:.2f}s "
+        f"(returncode={r.returncode})",
+        flush=True,
+    )
     if r.returncode != 0:
         raise RuntimeError(f"cvd_opt_demo.sh failed: {r.stderr or r.stdout}")
 
@@ -127,10 +163,25 @@ def run_pipeline(video_path: str, fps: float = 30.0):
 
     # 6) Export npz to COLMAP format (three txt files only; no image frame folder)
     colmap_dir = INSTALL_DIR / "outputs" / f"colmap_{SCENE_NAME}"
-    r = _run([
-        sys.executable, "-m", "data_export.export_colmap",
-        str(droid_npz), "-o", str(colmap_dir), "--no-images",
-    ])
+    print("[MegaSaM] Starting COLMAP export", flush=True)
+    t = time.time()
+    r = _run(
+        [
+            sys.executable,
+            "-m",
+            "data_export.export_colmap",
+            str(droid_npz),
+            "-o",
+            str(colmap_dir),
+            "--no-images",
+        ]
+    )
+    timings["colmap_export_sec"] = time.time() - t
+    print(
+        f"[MegaSaM] Finished COLMAP export in {timings['colmap_export_sec']:.2f}s "
+        f"(returncode={r.returncode})",
+        flush=True,
+    )
     if r.returncode == 0:
         cameras_txt = colmap_dir / "cameras.txt"
         images_txt = colmap_dir / "images.txt"
@@ -143,17 +194,36 @@ def run_pipeline(video_path: str, fps: float = 30.0):
     else:
         result["colmap_export_error"] = r.stderr or r.stdout or "export_colmap failed"
 
+    timings["pipeline_total_sec"] = time.time() - t_pipeline_start
+    result["timings"] = timings
+
     return result
 
 
 def handler(event):
     """RunPod serverless handler entry."""
     try:
+        t_handler_start = time.time()
         input_data = event.get("input", {})
         fps = float(input_data.get("fps", 30.0))
+        print(f"[MegaSaM] Handler received request with fps={fps}", flush=True)
+
+        t_download_start = time.time()
         video_path = _ensure_video_file(input_data)
+        download_sec = time.time() - t_download_start
+        print(f"[MegaSaM] Video ready at {video_path} (download/load {download_sec:.2f}s)", flush=True)
         try:
             out = run_pipeline(video_path, fps=fps)
+            handler_total_sec = time.time() - t_handler_start
+            timings = out.get("timings", {})
+            timings["download_sec"] = download_sec
+            timings["handler_total_sec"] = handler_total_sec
+            out["timings"] = timings
+            print(
+                f"[MegaSaM] Handler completed successfully in {handler_total_sec:.2f}s "
+                f"(download {download_sec:.2f}s, pipeline {timings.get('pipeline_total_sec', 0.0):.2f}s)",
+                flush=True,
+            )
             return out
         finally:
             if video_path.startswith(tempfile.gettempdir()):

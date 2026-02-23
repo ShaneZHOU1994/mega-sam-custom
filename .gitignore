@@ -7,5 +7,7 @@ Depth-Anything_video_visualization/
 *_csv/
 *.fbx
 *.mp4
-
+*logs*.txt
 */__pycache__/
+
+.env
