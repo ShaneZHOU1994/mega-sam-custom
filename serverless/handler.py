@@ -206,20 +206,21 @@ def run_pipeline(video_path: str, fps: float = 30.0):
     if r.returncode != 0:
         raise RuntimeError(f"evaluate_demo.sh failed: {r.stderr or r.stdout}")
 
-    # 4) CVD opt (cvd_opt_demo.sh)
-    print("[MegaSaM] Starting CVD optimization (cvd_opt_demo.sh)", flush=True)
-    t = time.time()
-    r = _run(["bash", "cvd_opt/cvd_opt_demo.sh"])
-    timings["cvd_opt_sec"] = time.time() - t
-    print(
-        f"[MegaSaM] Finished CVD optimization in {timings['cvd_opt_sec']:.2f}s "
-        f"(returncode={r.returncode})",
-        flush=True,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"cvd_opt_demo.sh failed: {r.stderr or r.stdout}")
+    # 4) CVD opt (cvd_opt_demo.sh) — disabled for now to save time/space.
+    # To re-enable later, uncomment this block and ensure storage is sufficient.
+    # print("[MegaSaM] Starting CVD optimization (cvd_opt_demo.sh)", flush=True)
+    # t = time.time()
+    # r = _run(["bash", "cvd_opt/cvd_opt_demo.sh"])
+    # timings["cvd_opt_sec"] = time.time() - t
+    # print(
+    #     f"[MegaSaM] Finished CVD optimization in {timings['cvd_opt_sec']:.2f}s "
+    #     f"(returncode={r.returncode})",
+    #     flush=True,
+    # )
+    # if r.returncode != 0:
+    #     raise RuntimeError(f"cvd_opt_demo.sh failed: {r.stderr or r.stdout}")
 
-    # 5) Output paths
+    # 5) Output paths (CVD is optional and may be absent)
     droid_npz = INSTALL_DIR / "outputs" / f"{SCENE_NAME}_droid.npz"
     cvd_npz = INSTALL_DIR / "outputs" / f"{SCENE_NAME}_sgd_cvd_hr.npz"
 
