@@ -50,6 +50,8 @@ RUN SYSTEM_SITE=$(head -1 /tmp/torch_site.txt) \
     && wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
     && bash /tmp/miniconda.sh -b -p $CONDA_INSTALL_DIR -u \
     && rm /tmp/miniconda.sh \
+    && $CONDA_INSTALL_DIR/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
+    && $CONDA_INSTALL_DIR/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r \
     && wget -q "$XFORMERS_URL" -O /tmp/${XFORMERS_TARBALL} \
     && $CONDA_INSTALL_DIR/bin/conda install /tmp/${XFORMERS_TARBALL} -y --prefix $CONDA_INSTALL_DIR \
     && CONDA_XFORMERS=$(find $CONDA_INSTALL_DIR -type d -path "*/site-packages/xformers" | head -1) \
