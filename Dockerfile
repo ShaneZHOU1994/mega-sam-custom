@@ -53,13 +53,16 @@ RUN pip install --no-cache-dir gdown && \
 
 # 3) Pre-download UniDepthV2 weights into the image cache so first inference
 #    does not spend time hitting Hugging Face.
+#    (Code in exec() so no line starts with "from" - Docker parses FROM otherwise.)
 RUN python - << 'EOF' && rm -rf ~/.cache/huggingface/accelerate
+exec("""
 from unidepth.models import UniDepthV2
 print("Downloading UniDepthV2 weights into image cache...")
 _ = UniDepthV2.from_pretrained(
     "lpiccinelli/unidepth-v2-vitl14",
     revision="1d0d3c52f60b5164629d279bb9a7546458e6dcc4",
 )
+""")
 EOF
 
 # Override base image ENTRYPOINT so our worker runs (not vastai supervisor)
