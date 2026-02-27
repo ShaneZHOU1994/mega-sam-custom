@@ -156,6 +156,20 @@ def save_full_reconstruction(
   )
 
 
+def _env_int(name, default):
+  try:
+    return int(os.getenv(name, default))
+  except (TypeError, ValueError):
+    return default
+
+
+def _env_float(name, default):
+  try:
+    return float(os.getenv(name, default))
+  except (TypeError, ValueError):
+    return default
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument("--datapath")
@@ -164,14 +178,32 @@ if __name__ == "__main__":
   parser.add_argument("--image_size", default=[240, 320])
   parser.add_argument("--disable_vis", action="store_true")
 
-  parser.add_argument("--beta", type=float, default=0.3)
+  parser.add_argument("--beta", type=float, default=_env_float("DROID_BETA", 0.3))
   parser.add_argument(
-      "--filter_thresh", type=float, default=2.0
+      "--filter_thresh",
+      type=float,
+      default=_env_float("DROID_FILTER_THRESH", 2.0),
   )  # motion threhold for keyframe
-  parser.add_argument("--warmup", type=int, default=8)
-  parser.add_argument("--keyframe_thresh", type=float, default=2.0)
-  parser.add_argument("--frontend_thresh", type=float, default=12.0)
-  parser.add_argument("--frontend_window", type=int, default=25)
+  parser.add_argument(
+      "--warmup",
+      type=int,
+      default=_env_int("DROID_WARMUP", 8),
+  )
+  parser.add_argument(
+      "--keyframe_thresh",
+      type=float,
+      default=_env_float("DROID_KEYFRAME_THRESH", 2.0),
+  )
+  parser.add_argument(
+      "--frontend_thresh",
+      type=float,
+      default=_env_float("DROID_FRONTEND_THRESH", 12.0),
+  )
+  parser.add_argument(
+      "--frontend_window",
+      type=int,
+      default=_env_int("DROID_FRONTEND_WINDOW", 25),
+  )
   parser.add_argument("--frontend_radius", type=int, default=2)
   parser.add_argument("--frontend_nms", type=int, default=1)
 
@@ -180,7 +212,11 @@ if __name__ == "__main__":
   parser.add_argument("--upsample", action="store_true")
   parser.add_argument("--scene_name", help="scene_name")
 
-  parser.add_argument("--backend_thresh", type=float, default=16.0)
+  parser.add_argument(
+      "--backend_thresh",
+      type=float,
+      default=_env_float("DROID_BACKEND_THRESH", 16.0),
+  )
   parser.add_argument("--backend_radius", type=int, default=2)
   parser.add_argument("--backend_nms", type=int, default=3)
 

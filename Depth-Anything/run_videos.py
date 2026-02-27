@@ -3,6 +3,8 @@ import glob
 import os
 # import matplotlib.pyplot as plt
 from timeit import default_timer as timer
+from contextlib import nullcontext
+
 import cv2
 from depth_anything.dpt import DPT_DINOv2
 from depth_anything.util.transform import NormalizeImage, PrepareForNet, Resize
@@ -12,6 +14,7 @@ import torch
 import torch.nn.functional as F
 from torchvision.transforms import Compose
 from tqdm import tqdm
+
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
@@ -35,6 +38,9 @@ if __name__ == '__main__':
   font_scale = 1
   font_thickness = 2
 
+  device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+  torch.backends.cudnn.benchmark = True
+
   assert args.encoder in ['vits', 'vitb', 'vitl']
   if args.encoder == 'vits':
     depth_anything = DPT_DINOv2(
@@ -42,21 +48,23 @@ if __name__ == '__main__':
         features=64,
         out_channels=[48, 96, 192, 384],
         localhub=args.localhub,
-    ).cuda()
+    )
   elif args.encoder == 'vitb':
     depth_anything = DPT_DINOv2(
         encoder='vitb',
         features=128,
         out_channels=[96, 192, 384, 768],
         localhub=args.localhub,
-    ).cuda()
+    )
   else:
     depth_anything = DPT_DINOv2(
         encoder='vitl',
         features=256,
         out_channels=[256, 512, 1024, 1024],
         localhub=args.localhub,
-    ).cuda()
+    )
+
+  depth_anything.to(device)
 
   total_params = sum(param.numel() for param in depth_anything.parameters())
   print('Total parameters: {:.2f}M'.format(total_params / 1e6))
@@ -91,39 +99,46 @@ if __name__ == '__main__':
   filenames = sorted(glob.glob(os.path.join(args.img_path, '*.png')))
   filenames += sorted(glob.glob(os.path.join(args.img_path, '*.jpg')))
 
+  os.makedirs(os.path.join(args.outdir), exist_ok=True)
+
+  use_amp = device.type == 'cuda'
+
   final_results = []
-  for filename in tqdm(filenames):
-    raw_image = cv2.imread(filename)[..., :3]
-    image = cv2.cvtColor(raw_image, cv2.COLOR_BGR2RGB) / 255.0
-    h, w = image.shape[:2]
+  amp_ctx = (
+      lambda: torch.cuda.amp.autocast(device_type='cuda', dtype=torch.float16)
+      if use_amp
+      else nullcontext()
+  )
 
-    image = transform({'image': image})['image']
-    image = torch.from_numpy(image).unsqueeze(0).cuda()
+  with torch.inference_mode():
+    for filename in tqdm(filenames):
+      raw_image = cv2.imread(filename)[..., :3]
+      image = cv2.cvtColor(raw_image, cv2.COLOR_BGR2RGB) / 255.0
+      h, w = image.shape[:2]
 
-    # start = timer()
-    with torch.no_grad():
-      depth = depth_anything(image)
-    # end = timer()
+      image = transform({'image': image})['image']
+      image = torch.from_numpy(image).unsqueeze(0).to(device)
 
-    depth = F.interpolate(
-        depth[None], (h, w), mode='bilinear', align_corners=False
-    )[0, 0]
-    depth_npy = np.float32(depth.cpu().numpy())
-    depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
+      with amp_ctx():
+        depth = depth_anything(image)
 
-    depth = depth.cpu().numpy().astype(np.uint8)
-    depth_color = cv2.applyColorMap(depth, cv2.COLORMAP_INFERNO)
+      depth = F.interpolate(
+          depth[None], (h, w), mode='bilinear', align_corners=False
+      )[0, 0]
+      depth_npy = np.float32(depth.cpu().numpy())
+      norm_depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-8) * 255.0
 
-    os.makedirs(os.path.join(args.outdir), exist_ok=True)
-    np.save(
-        os.path.join(args.outdir, filename.split('/')[-1][:-4] + '.npy'),
-        depth_npy,
-    )
+      depth_vis = norm_depth.cpu().numpy().astype(np.uint8)
+      depth_color = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
 
-    split_region = (
-        np.ones((raw_image.shape[0], margin_width, 3), dtype=np.uint8) * 255
-    )
-    combined_results = cv2.hconcat([raw_image, split_region, depth_color])
+      np.save(
+          os.path.join(args.outdir, filename.split('/')[-1][:-4] + '.npy'),
+          depth_npy,
+      )
 
+      split_region = (
+          np.ones((raw_image.shape[0], margin_width, 3), dtype=np.uint8) * 255
+      )
+      combined_results = cv2.hconcat([raw_image, split_region, depth_color])
 
-    final_results.append(combined_results[..., ::-1])
+      final_results.append(combined_results[..., ::-1])

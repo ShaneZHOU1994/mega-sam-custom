@@ -5,14 +5,17 @@ Input (event["input"]):
   - video_url: str (optional) – URL of MP4 to download
   - video_base64: str (optional) – base64-encoded MP4
   - fps: float (optional) – target FPS for frame extraction (default 30, as in workflow)
+  - max_frames: int (optional) – hard cap on number of extracted frames
+  - max_duration_sec: float (optional) – only process the first N seconds of video for frame extraction
+  - resize_long_dim: int (optional) – downscale extracted frames so the longer side is at most this many pixels
 
 Output (only the 3 COLMAP txt files; images.txt first):
   - colmap_images_txt_path, colmap_images_txt_content (most important), colmap_cameras_txt_path, colmap_points3d_txt_path
   - colmap_images_txt_url, colmap_cameras_txt_url, colmap_points3d_txt_url (when S3 env vars set)
   - timings, upload_errors (if any), error (if pipeline failed)
 
-Pipeline (strictly replicates complete_workflow_cmd.txt):
-  1. ./video_preprocess/run_extract_frames.sh <video> --fps <fps>   -> DAVIS/upload_frames
+Pipeline (strictly replicates complete_workflow_cmd.txt, with some configurable knobs):
+  1. ./video_preprocess/run_extract_frames.sh <video> --fps <fps> [--max-frames ... --max-duration-sec ... --resize-long-dim ...] -> DAVIS/upload_frames
   2. ./mono_depth_scripts/run_mono-depth_demo.sh
   3. ./tools/evaluate_demo.sh                                        -> outputs/upload_frames_droid.npz
   4. ./cvd_opt/cvd_opt_demo.sh                                       -> outputs/upload_frames_sgd_cvd_hr.npz
@@ -165,7 +168,13 @@ def _upload_to_s3_if_configured(job_id: str, file_path: Path, result_key: str, r
         print(f"[MegaSaM] {errors[-1]}", flush=True)
 
 
-def run_pipeline(video_path: str, fps: float = 30.0):
+def run_pipeline(
+    video_path: str,
+    fps: float = 30.0,
+    max_frames: int | None = None,
+    max_duration_sec: float | None = None,
+    resize_long_dim: int | None = None,
+):
     """Run full MegaSaM pipeline; replicates complete_workflow_cmd.txt step-by-step."""
     t_pipeline_start = time.time()
     timings: dict[str, float] = {}
@@ -186,7 +195,21 @@ def run_pipeline(video_path: str, fps: float = 30.0):
     # 1) Extract frames (run_extract_frames.sh)
     print(f"[MegaSaM] Starting frame extraction at fps={fps} from {video_path}", flush=True)
     t = time.time()
-    r = _run(["bash", "video_preprocess/run_extract_frames.sh", video_path, "--fps", str(fps)])
+    cmd = [
+        "bash",
+        "video_preprocess/run_extract_frames.sh",
+        video_path,
+        "--fps",
+        str(fps),
+    ]
+    if max_frames is not None:
+        cmd.extend(["--max-frames", str(int(max_frames))])
+    if max_duration_sec is not None:
+        cmd.extend(["--max-duration-sec", str(float(max_duration_sec))])
+    if resize_long_dim is not None:
+        cmd.extend(["--resize-long-dim", str(int(resize_long_dim))])
+
+    r = _run(cmd)
     timings["extract_frames_sec"] = time.time() - t
     print(
         f"[MegaSaM] Finished frame extraction in {timings['extract_frames_sec']:.2f}s "
@@ -284,6 +307,13 @@ def handler(event):
         t_handler_start = time.time()
         input_data = event.get("input", {})
         fps = float(input_data.get("fps", 30.0))
+        max_frames_raw = input_data.get("max_frames")
+        max_duration_sec_raw = input_data.get("max_duration_sec")
+        resize_long_dim_raw = input_data.get("resize_long_dim")
+
+        max_frames = int(max_frames_raw) if max_frames_raw is not None else 300
+        max_duration_sec = float(max_duration_sec_raw) if max_duration_sec_raw is not None else None
+        resize_long_dim = int(resize_long_dim_raw) if resize_long_dim_raw is not None else None
         print(f"[MegaSaM] Handler received request with fps={fps}", flush=True)
 
         t_download_start = time.time()
@@ -291,7 +321,13 @@ def handler(event):
         download_sec = time.time() - t_download_start
         print(f"[MegaSaM] Video ready at {video_path} (download/load {download_sec:.2f}s)", flush=True)
         try:
-            out = run_pipeline(video_path, fps=fps)
+            out = run_pipeline(
+                video_path,
+                fps=fps,
+                max_frames=max_frames,
+                max_duration_sec=max_duration_sec,
+                resize_long_dim=resize_long_dim,
+            )
             handler_total_sec = time.time() - t_handler_start
             timings = out.get("timings", {})
             timings["download_sec"] = download_sec

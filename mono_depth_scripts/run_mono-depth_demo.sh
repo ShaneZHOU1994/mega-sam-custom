@@ -21,20 +21,15 @@ evalset=(
 
 DATA_DIR=DAVIS
 
-# Run DepthAnything
-for seq in ${evalset[@]}; do
-  CUDA_VISIBLE_DEVICES=0 python Depth-Anything/run_videos.py --encoder vitl \
-  --load-from Depth-Anything/checkpoints/depth_anything_vitl14.pth \
-  --img-path $DATA_DIR/$seq \
-  --outdir Depth-Anything/video_visualization/$seq
-done
-
-# Run UniDepth
+# Ensure UniDepth package is importable
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/UniDepth"
 
 for seq in ${evalset[@]}; do
-  CUDA_VISIBLE_DEVICES=0 python UniDepth/scripts/demo_mega-sam.py \
-  --scene-name $seq \
-  --img-path $DATA_DIR/$seq \
-  --outdir UniDepth/outputs
+  CUDA_VISIBLE_DEVICES=0 python mono_depth_scripts/run_mono_depth_pipeline.py \
+    --data-dir "$DATA_DIR" \
+    --scene-name "$seq" \
+    --encoder vitl \
+    --load-from Depth-Anything/checkpoints/depth_anything_vitl14.pth \
+    --da-outdir Depth-Anything/video_visualization \
+    --unidepth-outdir UniDepth/outputs
 done
