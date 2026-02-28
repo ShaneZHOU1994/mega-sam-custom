@@ -163,9 +163,9 @@ def main() -> int:
     unidepth = build_unidepth(device)
 
     use_amp = device.type == "cuda"
+    # torch.cuda.amp.autocast() does not take device_type (only torch.amp.autocast in newer PyTorch does)
     amp_ctx = (
-        lambda: torch.cuda.amp.autocast(device_type="cuda", dtype=torch.float16)
-        if use_amp
+        (lambda: torch.cuda.amp.autocast(dtype=torch.float16)) if use_amp
         else nullcontext()
     )
 
