@@ -56,5 +56,10 @@ COPY mono_depth_scripts/run_mono_depth_pipeline.py /app/mega-sam/mono_depth_scri
 # COPY docker/download_unidepth.py /tmp/download_unidepth.py
 # RUN python /tmp/download_unidepth.py && rm -rf ~/.cache/huggingface/accelerate /tmp/download_unidepth.py
 
+# 4) Pre-download DINOv2 (ViT-L/14) into torch hub cache so mono-depth pipeline
+#    does not download it at runtime (GitHub repo + ~1.13G checkpoint).
+COPY docker/download_dinov2.py /tmp/download_dinov2.py
+RUN python /tmp/download_dinov2.py && rm /tmp/download_dinov2.py
+
 # Override base image ENTRYPOINT so our worker runs (not vastai supervisor)
 # ENTRYPOINT ["/bin/bash", "/app/entry_point.sh"]
